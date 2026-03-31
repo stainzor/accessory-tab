@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: SIJAB
- * Version: 2.13.0
+ * Version: 2.14.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -29,9 +29,11 @@ if ( ! empty( $sijab_gh_token ) ) {
 
 class SIJAB_Tillbehor {
 
-	const META_KEY = '_sijab_accessories_ids';
-	const VERSION  = '2.13.0';
-	const OPTION   = 'sijab_tillbehor_settings';
+	const META_KEY      = '_sijab_accessories_ids';
+	const BUNDLE_META   = '_sijab_bundle_items';
+	const BUNDLE_FLAG   = '_sijab_is_bundle';
+	const VERSION       = '2.14.0';
+	const OPTION        = 'sijab_tillbehor_settings';
 
 	/** @var array|null Cached settings. */
 	private $settings = null;
@@ -41,11 +43,19 @@ class SIJAB_Tillbehor {
 		add_action( 'wp', [ $this, 'register_frontend_hooks' ] );
 		add_action( 'wp_enqueue_scripts', [ $this, 'enqueue_frontend_assets' ] );
 
-		// Admin: produktredigerare.
+		// Admin: produktredigerare — tillbehör.
 		add_filter( 'woocommerce_product_data_tabs', [ $this, 'add_admin_tab' ] );
 		add_action( 'woocommerce_product_data_panels', [ $this, 'render_admin_panel' ] );
 		add_action( 'woocommerce_admin_process_product_object', [ $this, 'save_product_accessories' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_admin_css' ] );
+
+		// Admin: paketprodukter.
+		add_filter( 'woocommerce_product_data_tabs', [ $this, 'add_bundle_admin_tab' ] );
+		add_action( 'woocommerce_product_data_panels', [ $this, 'render_bundle_admin_panel' ] );
+		add_action( 'woocommerce_admin_process_product_object', [ $this, 'save_bundle_data' ] );
+
+		// Frontend: paketprodukter.
+		add_action( 'woocommerce_single_product_summary', [ $this, 'render_bundle_section' ], 25 );
 
 		// Settings page under WooCommerce menu.
 		add_action( 'admin_menu', [ $this, 'register_settings_menu' ] );
@@ -776,6 +786,187 @@ class SIJAB_Tillbehor {
 		return array_values( array_unique( array_filter( array_map( 'absint', $ids ), function( $id ) {
 			return $id > 0;
 		} ) ) );
+	}
+
+	// ──────────────────────────────────────────────────────────────
+	// Bundle — Admin
+	// ──────────────────────────────────────────────────────────────
+
+	public function add_bundle_admin_tab( $tabs ): array {
+		$tabs['sijab_bundle'] = [
+			'label'    => __( 'Paket', 'sijab-tillbehor' ),
+			'target'   => 'sijab_bundle_data',
+			'class'    => [ 'show_if_simple' ],
+			'priority' => 81,
+		];
+		return $tabs;
+	}
+
+	public function render_bundle_admin_panel(): void {
+		global $post;
+		$is_bundle = (bool) get_post_meta( $post->ID, self::BUNDLE_FLAG, true );
+		$items     = get_post_meta( $post->ID, self::BUNDLE_META, true );
+		if ( ! is_array( $items ) ) $items = [];
+		?>
+		<div id="sijab_bundle_data" class="panel woocommerce_options_panel">
+			<div class="options_group">
+				<?php wp_nonce_field( 'sijab_save_bundle', 'sijab_bundle_nonce' ); ?>
+				<p class="form-field">
+					<label for="sijab_is_bundle"><?php esc_html_e( 'Aktivera paket', 'sijab-tillbehor' ); ?></label>
+					<input type="checkbox" id="sijab_is_bundle" name="sijab_is_bundle" value="1" <?php checked( $is_bundle ); ?> />
+					<span class="description"><?php esc_html_e( 'Markera produkten som ett paket och visa ingående delar på produktsidan.', 'sijab-tillbehor' ); ?></span>
+				</p>
+			</div>
+
+			<div class="options_group" id="sijab_bundle_items_wrap" style="<?php echo $is_bundle ? '' : 'display:none;'; ?>">
+				<p style="padding: 10px 12px 0; font-weight: 600;"><?php esc_html_e( 'Ingående produkter', 'sijab-tillbehor' ); ?></p>
+
+				<div id="sijab_bundle_rows">
+					<?php foreach ( $items as $i => $item ) :
+						$p = wc_get_product( $item['product_id'] ?? 0 );
+						if ( ! $p ) continue;
+						?>
+						<div class="sijab-bundle-row" style="display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid #eee;">
+							<select class="wc-product-search" name="sijab_bundle_items[<?php echo $i; ?>][product_id]" style="width:40%;" data-placeholder="<?php esc_attr_e( 'Sök produkt…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="false">
+								<option value="<?php echo absint( $item['product_id'] ); ?>" selected="selected"><?php echo esc_html( wp_strip_all_tags( $p->get_formatted_name() ) ); ?></option>
+							</select>
+							<label style="font-size:12px; white-space:nowrap;"><?php esc_html_e( 'Standard:', 'sijab-tillbehor' ); ?>
+								<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_default]" value="<?php echo absint( $item['qty_default'] ?? 1 ); ?>" min="1" style="width:50px;" />
+							</label>
+							<label style="font-size:12px; white-space:nowrap;"><?php esc_html_e( 'Min:', 'sijab-tillbehor' ); ?>
+								<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_min]" value="<?php echo absint( $item['qty_min'] ?? 1 ); ?>" min="1" style="width:50px;" />
+							</label>
+							<label style="font-size:12px; white-space:nowrap;"><?php esc_html_e( 'Max:', 'sijab-tillbehor' ); ?>
+								<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_max]" value="<?php echo absint( $item['qty_max'] ?? 0 ); ?>" min="0" style="width:50px;" placeholder="∞" />
+							</label>
+							<button type="button" class="button sijab-bundle-remove" style="flex-shrink:0;"><?php esc_html_e( 'Ta bort', 'sijab-tillbehor' ); ?></button>
+						</div>
+					<?php endforeach; ?>
+				</div>
+
+				<p style="padding: 8px 12px;">
+					<button type="button" class="button" id="sijab_add_bundle_row"><?php esc_html_e( '+ Lägg till produkt', 'sijab-tillbehor' ); ?></button>
+				</p>
+			</div>
+		</div>
+
+		<script>
+		jQuery(function($) {
+			var rowIndex = <?php echo max( count( $items ), 1 ); ?>;
+
+			$('#sijab_is_bundle').on('change', function() {
+				$('#sijab_bundle_items_wrap').toggle(this.checked);
+			});
+
+			$('#sijab_add_bundle_row').on('click', function() {
+				var html = '<div class="sijab-bundle-row" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #eee;">'
+					+ '<select class="wc-product-search" name="sijab_bundle_items[' + rowIndex + '][product_id]" style="width:40%;" data-placeholder="<?php esc_attr_e( 'Sök produkt…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="false"></select>'
+					+ '<label style="font-size:12px;white-space:nowrap;"><?php esc_html_e( 'Standard:', 'sijab-tillbehor' ); ?> <input type="number" name="sijab_bundle_items[' + rowIndex + '][qty_default]" value="1" min="1" style="width:50px;" /></label>'
+					+ '<label style="font-size:12px;white-space:nowrap;"><?php esc_html_e( 'Min:', 'sijab-tillbehor' ); ?> <input type="number" name="sijab_bundle_items[' + rowIndex + '][qty_min]" value="1" min="1" style="width:50px;" /></label>'
+					+ '<label style="font-size:12px;white-space:nowrap;"><?php esc_html_e( 'Max:', 'sijab-tillbehor' ); ?> <input type="number" name="sijab_bundle_items[' + rowIndex + '][qty_max]" value="0" min="0" style="width:50px;" placeholder="∞" /></label>'
+					+ '<button type="button" class="button sijab-bundle-remove"><?php esc_html_e( 'Ta bort', 'sijab-tillbehor' ); ?></button>'
+					+ '</div>';
+				$('#sijab_bundle_rows').append(html);
+				$(document.body).trigger('wc-enhanced-select-init');
+				rowIndex++;
+			});
+
+			$(document).on('click', '.sijab-bundle-remove', function() {
+				$(this).closest('.sijab-bundle-row').remove();
+			});
+		});
+		</script>
+		<?php
+	}
+
+	public function save_bundle_data( $product ): void {
+		if ( ! isset( $_POST['sijab_bundle_nonce'] ) || ! wp_verify_nonce( $_POST['sijab_bundle_nonce'], 'sijab_save_bundle' ) ) return;
+		if ( ! current_user_can( 'edit_product', $product->get_id() ) ) return;
+
+		$is_bundle = ! empty( $_POST['sijab_is_bundle'] );
+		update_post_meta( $product->get_id(), self::BUNDLE_FLAG, $is_bundle ? '1' : '' );
+
+		$items = [];
+		if ( $is_bundle && ! empty( $_POST['sijab_bundle_items'] ) && is_array( $_POST['sijab_bundle_items'] ) ) {
+			foreach ( $_POST['sijab_bundle_items'] as $row ) {
+				$pid = absint( $row['product_id'] ?? 0 );
+				if ( ! $pid || ! wc_get_product( $pid ) ) continue;
+				$items[] = [
+					'product_id'  => $pid,
+					'qty_default' => max( 1, absint( $row['qty_default'] ?? 1 ) ),
+					'qty_min'     => max( 1, absint( $row['qty_min'] ?? 1 ) ),
+					'qty_max'     => absint( $row['qty_max'] ?? 0 ),
+				];
+			}
+		}
+
+		update_post_meta( $product->get_id(), self::BUNDLE_META, $items );
+	}
+
+	// ──────────────────────────────────────────────────────────────
+	// Bundle — Frontend
+	// ──────────────────────────────────────────────────────────────
+
+	public function render_bundle_section(): void {
+		global $product;
+		if ( ! $product instanceof WC_Product ) return;
+		if ( ! get_post_meta( $product->get_id(), self::BUNDLE_FLAG, true ) ) return;
+
+		$items = $this->get_bundle_items( $product->get_id() );
+		if ( empty( $items ) ) return;
+
+		$total_regular = 0.0;
+		foreach ( $items as $item ) {
+			$p = wc_get_product( $item['product_id'] );
+			if ( ! $p ) continue;
+			$total_regular += (float) $p->get_price() * $item['qty_default'];
+		}
+
+		$bundle_price = (float) $product->get_price();
+		$savings      = $total_regular - $bundle_price;
+		?>
+		<div class="sijab-bundle-section">
+			<h3 class="sijab-bundle-section__title"><?php esc_html_e( 'Paketet innehåller', 'sijab-tillbehor' ); ?></h3>
+			<ul class="sijab-bundle-section__list">
+				<?php foreach ( $items as $item ) :
+					$p = wc_get_product( $item['product_id'] );
+					if ( ! $p ) continue;
+					$img  = $p->get_image_id() ? wp_get_attachment_image_url( $p->get_image_id(), 'thumbnail' ) : wc_placeholder_img_src( 'thumbnail' );
+					$link = get_permalink( $p->get_id() );
+					$line_price = (float) $p->get_price() * $item['qty_default'];
+					?>
+					<li class="sijab-bundle-item">
+						<a href="<?php echo esc_url( $link ); ?>" class="sijab-bundle-item__image">
+							<img src="<?php echo esc_url( $img ); ?>" alt="<?php echo esc_attr( $p->get_name() ); ?>" />
+						</a>
+						<div class="sijab-bundle-item__info">
+							<a href="<?php echo esc_url( $link ); ?>" class="sijab-bundle-item__name"><?php echo esc_html( $p->get_name() ); ?></a>
+							<?php if ( $p->get_sku() ) : ?>
+								<span class="sijab-bundle-item__sku"><?php echo esc_html( 'Art.nr: ' . $p->get_sku() ); ?></span>
+							<?php endif; ?>
+						</div>
+						<div class="sijab-bundle-item__qty-price">
+							<span class="sijab-bundle-item__qty"><?php echo absint( $item['qty_default'] ); ?> <?php esc_html_e( 'st', 'sijab-tillbehor' ); ?></span>
+							<?php if ( $line_price > 0 ) : ?>
+								<span class="sijab-bundle-item__price"><?php echo wc_price( $line_price ); ?></span>
+							<?php endif; ?>
+						</div>
+					</li>
+				<?php endforeach; ?>
+			</ul>
+			<?php if ( $total_regular > 0 && $savings > 0.01 ) : ?>
+				<div class="sijab-bundle-section__summary">
+					<span class="sijab-bundle-section__regular"><?php esc_html_e( 'Ordinarie värde:', 'sijab-tillbehor' ); ?> <del><?php echo wc_price( $total_regular ); ?></del></span>
+					<span class="sijab-bundle-section__saving"><?php printf( esc_html__( 'Du sparar %s', 'sijab-tillbehor' ), wc_price( $savings ) ); ?></span>
+				</div>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	private function get_bundle_items( int $product_id ): array {
+		$items = get_post_meta( $product_id, self::BUNDLE_META, true );
+		return is_array( $items ) ? $items : [];
 	}
 }
 

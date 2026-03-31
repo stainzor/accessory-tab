@@ -573,3 +573,136 @@
 	grid-template-columns: repeat(2, 1fr);
 	gap: 12px;
 }
+
+/* ══════════════════════════════════════════
+   BUNDLE SECTION
+   ══════════════════════════════════════════ */
+
+.sijab-bundle-section {
+	width: 100%;
+	margin: 0 0 20px;
+	background: #f4f8fb;
+	border: 1px solid #dce8f0;
+	border-radius: 8px;
+	padding: 20px;
+	box-sizing: border-box;
+}
+
+.sijab-bundle-section__title {
+	font-size: 15px;
+	font-weight: 600;
+	color: #1a1a1a;
+	margin: 0 0 12px;
+	padding: 0;
+}
+
+.sijab-bundle-section__list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+.sijab-bundle-item {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 0;
+	border-bottom: 1px solid #dce8f0;
+}
+
+.sijab-bundle-item:last-child {
+	border-bottom: none;
+}
+
+.sijab-bundle-item__image {
+	width: 48px;
+	height: 48px;
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #fff;
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.sijab-bundle-item__image img {
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+}
+
+.sijab-bundle-item__info {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.sijab-bundle-item__name {
+	font-size: 13px;
+	font-weight: 600;
+	color: #1a1a1a;
+	text-decoration: none;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sijab-bundle-item__name:hover {
+	color: #0073aa;
+}
+
+.sijab-bundle-item__sku {
+	font-size: 11px;
+	color: #999;
+}
+
+.sijab-bundle-item__qty-price {
+	flex-shrink: 0;
+	text-align: right;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.sijab-bundle-item__qty {
+	font-size: 12px;
+	color: #555;
+}
+
+.sijab-bundle-item__price {
+	font-size: 13px;
+	font-weight: 500;
+	color: #444;
+}
+
+.sijab-bundle-section__summary {
+	margin-top: 12px;
+	padding-top: 12px;
+	border-top: 1px solid #dce8f0;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.sijab-bundle-section__regular {
+	font-size: 13px;
+	color: #888;
+}
+
+.sijab-bundle-section__regular del {
+	color: #aaa;
+}
+
+.sijab-bundle-section__saving {
+	font-size: 13px;
+	font-weight: 600;
+	color: #1e7a2e;
+}
