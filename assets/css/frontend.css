@@ -1,0 +1,575 @@
+/**
+ * Accessory Tab — Frontend Styles v2.10.0
+ * Dustin-inspirerad design: pill qty, meta inuti kort, ljusblå sektion.
+ */
+
+/* ── Section wrapper — light blue brand background ── */
+.sijab-accessories-section {
+	width: 100%;
+	margin: 12px 0 24px;
+	clear: both;
+	background: #eef5fa;
+	border-radius: 8px;
+	padding: 24px;
+	box-sizing: border-box;
+}
+
+.sijab-accessories-section__title {
+	font-size: 18px;
+	font-weight: 500;
+	color: #1a1a1a;
+	margin: 0 0 16px;
+	padding: 0;
+}
+
+/* ── List container ── */
+.sijab-accessories-section__list {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+/* Hidden items (behind "Visa alla") */
+.sijab-acc-item--hidden {
+	display: none;
+}
+
+.sijab-accessories-section.sijab-show-all .sijab-acc-item--hidden {
+	display: block;
+}
+
+.sijab-accessories-section--grid.sijab-show-all .sijab-acc-item--hidden {
+	display: block;
+}
+
+/* ── "Visa alla tillbehör" link ── */
+.sijab-accessories-section__footer {
+	text-align: right;
+	margin-top: 12px;
+}
+
+.sijab-show-all-link {
+	font-size: 14px;
+	font-weight: 500;
+	color: #0073aa;
+	text-decoration: none;
+	cursor: pointer;
+}
+
+.sijab-show-all-link:hover {
+	text-decoration: underline;
+	color: #005a87;
+}
+
+/* ══════════════════════════════════════════
+   HORIZONTAL LAYOUT (default)
+   ══════════════════════════════════════════ */
+
+.sijab-accessories-section--horizontal .sijab-acc-card {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	padding: 14px 16px;
+	border: 1px solid #e0e0e0;
+	background: #fff;
+	margin-bottom: -1px;
+	transition: background 0.15s ease;
+}
+
+.sijab-accessories-section--horizontal .sijab-acc-item:first-child .sijab-acc-card {
+	border-radius: 6px 6px 0 0;
+}
+
+.sijab-accessories-section--horizontal .sijab-acc-item:last-child .sijab-acc-card,
+.sijab-accessories-section--horizontal.sijab-show-all .sijab-acc-item:last-child .sijab-acc-card {
+	border-radius: 0 0 6px 6px;
+}
+
+.sijab-accessories-section--horizontal:not(.sijab-show-all) .sijab-acc-item:not(.sijab-acc-item--hidden):last-of-type .sijab-acc-card {
+	border-radius: 0 0 6px 6px;
+}
+
+.sijab-accessories-section--horizontal .sijab-acc-item:only-child .sijab-acc-card {
+	border-radius: 6px;
+}
+
+.sijab-accessories-section--horizontal .sijab-acc-card:hover {
+	background: #f8fbfd;
+}
+
+/* Image */
+.sijab-accessories-section--horizontal .sijab-acc-card__image {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 64px;
+	height: 64px;
+	flex-shrink: 0;
+	background: #fff;
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.sijab-accessories-section--horizontal .sijab-acc-card__image img {
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+}
+
+/* Body */
+.sijab-accessories-section--horizontal .sijab-acc-card__body {
+	display: flex;
+	align-items: center;
+	flex: 1;
+	gap: 16px;
+	min-width: 0;
+}
+
+/* Details: name + price */
+.sijab-accessories-section--horizontal .sijab-acc-card__details {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	flex: 1;
+	min-width: 0;
+}
+
+.sijab-accessories-section--horizontal .sijab-acc-card__name {
+	font-size: 14px;
+	font-weight: 600;
+	color: #1a1a1a;
+	text-decoration: none;
+	line-height: 1.35;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sijab-accessories-section--horizontal .sijab-acc-card__name:hover {
+	color: #0073aa;
+}
+
+.sijab-accessories-section--horizontal .sijab-acc-card__price {
+	font-size: 14px;
+	font-weight: 700;
+	color: #1a1a1a;
+}
+
+.sijab-accessories-section--horizontal .sijab-acc-card__price del {
+	font-weight: 400;
+	color: #999;
+	font-size: 12px;
+}
+
+.sijab-accessories-section--horizontal .sijab-acc-card__price ins {
+	text-decoration: none;
+	color: #dd3333;
+}
+
+/* "Inkl moms" suffix — smaller and grey */
+.sijab-accessories-section .sijab-acc-card__price .woocommerce-Price-currencySymbol + .tax_label,
+.sijab-accessories-section .sijab-acc-card__price .woocommerce-price-suffix {
+	font-size: 11px;
+	font-weight: 400;
+	color: #888;
+}
+
+/* ── Meta: stock + sku (inside card body) ── */
+.sijab-accessories-section--horizontal .sijab-acc-card__meta {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	flex-shrink: 0;
+	min-width: 90px;
+	border: none;
+	padding: 0;
+	margin: 0;
+	background: transparent;
+}
+
+/* Stock badge — uppercase, no dot */
+.sijab-acc-card__stock {
+	display: inline-flex;
+	align-items: center;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1;
+	white-space: nowrap;
+	text-transform: uppercase;
+}
+
+.sijab-acc-card__stock--instock {
+	color: #1e7a2e;
+}
+
+.sijab-acc-card__stock--onbackorder {
+	color: #7a5a1e;
+}
+
+.sijab-acc-card__stock--outofstock {
+	color: #a61b1b;
+}
+
+/* SKU */
+.sijab-acc-card__sku {
+	font-size: 11px;
+	color: #999;
+	white-space: nowrap;
+}
+
+/* ── Right side: qty + button row ── */
+.sijab-accessories-section--horizontal .sijab-acc-card__right {
+	flex-shrink: 0;
+	min-width: 210px;
+}
+
+.sijab-acc-card__qty-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	justify-content: flex-end;
+}
+
+/* ── Pill-shaped quantity selector ── */
+.sijab-acc-card__qty {
+	display: inline-flex !important;
+	align-items: center;
+	border: 1px solid #d0d0d0;
+	border-radius: 99px;
+	overflow: hidden;
+	background: #fff;
+	height: 36px;
+	width: auto !important;
+	max-width: 100px;
+	flex-shrink: 0;
+}
+
+.sijab-qty-btn {
+	display: flex !important;
+	align-items: center;
+	justify-content: center;
+	width: 30px !important;
+	min-width: 30px !important;
+	max-width: 30px !important;
+	height: 100% !important;
+	border: none !important;
+	background: transparent !important;
+	font-size: 16px;
+	color: #555;
+	cursor: pointer;
+	user-select: none;
+	padding: 0 !important;
+	margin: 0 !important;
+	line-height: 1;
+	transition: background 0.15s ease, color 0.15s ease;
+	box-shadow: none !important;
+}
+
+.sijab-qty-btn:hover {
+	background: #f0f0f0 !important;
+	color: #1a1a1a;
+}
+
+.sijab-qty-input {
+	width: 34px !important;
+	min-width: 34px !important;
+	max-width: 34px !important;
+	height: 100% !important;
+	border: none !important;
+	border-left: 1px solid #e8e8e8 !important;
+	border-right: 1px solid #e8e8e8 !important;
+	text-align: center;
+	font-size: 14px;
+	font-weight: 500;
+	color: #1a1a1a;
+	background: #fff !important;
+	padding: 0 !important;
+	margin: 0 !important;
+	-moz-appearance: textfield;
+	appearance: textfield;
+	box-shadow: none !important;
+	outline: none !important;
+	border-radius: 0 !important;
+}
+
+.sijab-qty-input::-webkit-inner-spin-button,
+.sijab-qty-input::-webkit-outer-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+
+/* ── Outline button style ── */
+.sijab-acc-atc-btn.button {
+	background: var(--primary-color, #1e73be) !important;
+	color: #fff !important;
+	border: none !important;
+	border-radius: 99px !important;
+	font-size: 13px !important;
+	font-weight: 600 !important;
+	padding: 8px 22px !important;
+	margin: 0 !important;
+	white-space: nowrap;
+	transition: opacity 0.15s ease, background 0.15s ease;
+	text-decoration: none;
+	line-height: 1.4;
+	height: 36px;
+	display: inline-flex;
+	align-items: center;
+	box-sizing: border-box;
+}
+
+.sijab-acc-atc-btn.button:hover {
+	opacity: 0.85;
+	color: #fff !important;
+}
+
+/* Hide "added" checkmark */
+.sijab-acc-atc-btn.button.added::after {
+	content: none !important;
+}
+
+/* ══════════════════════════════════════════
+   GRID LAYOUT (card style)
+   ══════════════════════════════════════════ */
+
+.sijab-accessories-section--grid .sijab-accessories-section__list {
+	display: grid;
+	grid-template-columns: repeat(var(--sijab-columns, 4), 1fr);
+	gap: 16px;
+	flex-direction: unset;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	border: 1px solid #e0e0e0;
+	border-radius: 8px;
+	background: #fff;
+	overflow: hidden;
+	transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card:hover {
+	border-color: #ccc;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__image {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	aspect-ratio: 1;
+	overflow: hidden;
+	background: #fff;
+	padding: 12px;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__image img {
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+	transition: transform 0.2s ease;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card:hover .sijab-acc-card__image img {
+	transform: scale(1.03);
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__body {
+	display: flex;
+	flex-direction: column;
+	padding: 12px 14px 14px;
+	flex: 1;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__details {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__name {
+	font-size: 14px;
+	font-weight: 600;
+	color: #1a1a1a;
+	text-decoration: none;
+	line-height: 1.35;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	min-height: 2.7em;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__name:hover {
+	color: #0073aa;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__price {
+	font-size: 15px;
+	font-weight: 700;
+	color: #1a1a1a;
+	margin: 4px 0 2px;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__price del {
+	font-weight: 400;
+	color: #999;
+	font-size: 13px;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__price ins {
+	text-decoration: none;
+	color: #dd3333;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__meta {
+	padding: 4px 14px 8px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__right {
+	margin-top: auto;
+	padding: 10px 14px 14px;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__right .sijab-acc-atc-btn.button {
+	display: flex;
+	width: 100%;
+	justify-content: center;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__qty-row {
+	display: flex;
+	gap: 8px;
+}
+
+.sijab-accessories-section--grid .sijab-acc-card__qty {
+	flex-shrink: 0;
+}
+
+.sijab-accessories-section--grid .sijab-acc-atc-btn.button {
+	flex: 1;
+	text-align: center;
+	min-height: 36px;
+}
+
+/* Mobile toggle — hidden on desktop */
+.sijab-mobile-toggle {
+	display: none;
+}
+
+/* ── Responsive ── */
+
+@media (max-width: 600px) {
+	.sijab-accessories-section {
+		padding: 16px;
+		margin: 24px 0 16px;
+	}
+
+	.sijab-accessories-section--horizontal .sijab-acc-card {
+		flex-wrap: wrap;
+		gap: 10px;
+		padding: 12px;
+	}
+
+	.sijab-accessories-section--horizontal .sijab-acc-card__image {
+		width: 52px;
+		height: 52px;
+	}
+
+	.sijab-accessories-section--horizontal .sijab-acc-card__body {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.sijab-accessories-section--horizontal .sijab-acc-card__name {
+		white-space: normal;
+		overflow: visible;
+		text-overflow: unset;
+	}
+
+	.sijab-accessories-section--horizontal .sijab-acc-card__meta {
+		flex-direction: row;
+		gap: 12px;
+	}
+
+	.sijab-accessories-section--horizontal .sijab-acc-card__right {
+		width: 100%;
+		min-width: unset;
+	}
+
+	.sijab-acc-card__qty-row {
+		width: 100%;
+	}
+
+	.sijab-acc-card__qty-row .sijab-acc-atc-btn.button {
+		flex: 1;
+		justify-content: center;
+	}
+
+	/* Mobile: show only 1st accessory, hide the rest */
+	.sijab-acc-item:not(:first-child) {
+		display: none;
+	}
+	.sijab-accessories-section.sijab-show-all-mobile .sijab-acc-item:not(:first-child) {
+		display: block;
+	}
+	/* Hide desktop "Visa alla" on mobile, show mobile version */
+	.sijab-accessories-section__footer {
+		display: none;
+	}
+	.sijab-mobile-toggle {
+		display: block;
+		text-align: right;
+		padding: 8px 0 0;
+	}
+	.sijab-mobile-toggle a {
+		color: var(--primary-color, #1e73be);
+		font-size: 13px;
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.sijab-mobile-toggle a:hover {
+		text-decoration: underline;
+	}
+}
+
+/* Grid: responsive columns */
+@media (max-width: 992px) {
+	.sijab-accessories-section--grid .sijab-accessories-section__list {
+		grid-template-columns: repeat(3, 1fr);
+	}
+}
+
+@media (max-width: 768px) {
+	.sijab-accessories-section--grid .sijab-accessories-section__list {
+		grid-template-columns: repeat(2, 1fr);
+		gap: 12px;
+	}
+
+	.sijab-accessories-section__title {
+		font-size: 16px;
+	}
+}
+
+@media (max-width: 480px) {
+	.sijab-accessories-section--grid .sijab-accessories-section__list {
+		grid-template-columns: 1fr 1fr;
+		gap: 10px;
+	}
+}
+
+/* When placed inside product summary (narrow column) */
+.summary .sijab-accessories-section--grid .sijab-accessories-section__list,
+.product-info .sijab-accessories-section--grid .sijab-accessories-section__list,
+.entry-summary .sijab-accessories-section--grid .sijab-accessories-section__list {
+	grid-template-columns: repeat(2, 1fr);
+	gap: 12px;
+}
