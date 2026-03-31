@@ -597,12 +597,18 @@
 }
 
 .sijab-bundle-section__list {
-	list-style: none;
-	margin: 0;
-	padding: 0;
+	list-style: none !important;
+	margin: 0 !important;
+	padding: 0 !important;
 	display: flex;
 	flex-direction: column;
 	gap: 0;
+}
+
+.sijab-bundle-section__list li::before,
+.sijab-bundle-section__list li::after {
+	display: none !important;
+	content: none !important;
 }
 
 .sijab-bundle-item {
@@ -618,8 +624,10 @@
 }
 
 .sijab-bundle-item__image {
-	width: 48px;
-	height: 48px;
+	width: 56px !important;
+	height: 56px !important;
+	min-width: 56px !important;
+	max-width: 56px !important;
 	flex-shrink: 0;
 	display: flex;
 	align-items: center;
@@ -630,9 +638,11 @@
 }
 
 .sijab-bundle-item__image img {
-	max-width: 100%;
-	max-height: 100%;
-	object-fit: contain;
+	width: 56px !important;
+	height: 56px !important;
+	max-width: 56px !important;
+	max-height: 56px !important;
+	object-fit: contain !important;
 }
 
 .sijab-bundle-item__info {
