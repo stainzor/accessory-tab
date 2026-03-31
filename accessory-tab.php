@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: SIJAB
- * Version: 2.14.2
+ * Version: 2.14.3
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.14.2';
+	const VERSION       = '2.14.3';
 	const OPTION        = 'sijab_tillbehor_settings';
 
 	/** @var array|null Cached settings. */
@@ -550,8 +550,9 @@ class SIJAB_Tillbehor {
 		}
 		if ( ! $product ) return;
 
-		$ids = $this->get_accessory_ids( $product->get_id() );
-		if ( empty( $ids ) ) return;
+		$ids        = $this->get_accessory_ids( $product->get_id() );
+		$has_bundle = (bool) get_post_meta( $product->get_id(), self::BUNDLE_FLAG, true );
+		if ( empty( $ids ) && ! $has_bundle ) return;
 
 		wp_enqueue_style(
 			'sijab-tillbehor-frontend',
