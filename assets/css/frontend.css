@@ -151,7 +151,7 @@
 
 .sijab-accessories-section--horizontal .sijab-acc-card__price {
 	font-size: 13px;
-	font-weight: 500;
+	font-weight: 500 !important;
 	color: #444;
 }
 
@@ -408,7 +408,7 @@
 
 .sijab-accessories-section--grid .sijab-acc-card__price {
 	font-size: 13px;
-	font-weight: 500;
+	font-weight: 500 !important;
 	color: #444;
 	margin: 4px 0 2px;
 }
