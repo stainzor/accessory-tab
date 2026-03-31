@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: SIJAB
- * Version: 2.12.2
+ * Version: 2.13.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -30,7 +30,7 @@ if ( ! empty( $sijab_gh_token ) ) {
 class SIJAB_Tillbehor {
 
 	const META_KEY = '_sijab_accessories_ids';
-	const VERSION  = '2.12.2';
+	const VERSION  = '2.13.0';
 	const OPTION   = 'sijab_tillbehor_settings';
 
 	/** @var array|null Cached settings. */
@@ -50,6 +50,7 @@ class SIJAB_Tillbehor {
 		// Settings page under WooCommerce menu.
 		add_action( 'admin_menu', [ $this, 'register_settings_menu' ] );
 		add_action( 'admin_init', [ $this, 'register_settings' ] );
+		add_action( 'admin_init', [ $this, 'handle_migration' ] );
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -260,8 +261,98 @@ class SIJAB_Tillbehor {
 			<p class="description" style="margin-top: 24px;">
 				<?php printf( esc_html__( 'Pluginversion: %s', 'sijab-tillbehor' ), '<strong>' . self::VERSION . '</strong>' ); ?>
 			</p>
+
+			<?php $this->render_migration_section(); ?>
 		</div>
 		<?php
+	}
+
+	/**
+	 * Render migration section on settings page.
+	 */
+	public function render_migration_section(): void {
+		global $wpdb;
+		$table  = $wpdb->prefix . 'woocommerce_bundled_items';
+		$exists = $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table;
+		$result = get_transient( 'sijab_migration_result' );
+		delete_transient( 'sijab_migration_result' );
+		?>
+		<hr style="margin: 32px 0;" />
+		<h2><?php esc_html_e( 'Migrera Product Bundles → Korsförsäljning', 'sijab-tillbehor' ); ?></h2>
+		<p><?php esc_html_e( 'Kopierar produktkopplingar från WooCommerce Product Bundles till korsförsäljningsfältet så att Accessory Tab kan visa dem automatiskt. Befintliga korsförsäljningar bevaras.', 'sijab-tillbehor' ); ?></p>
+
+		<?php if ( $result ) : ?>
+			<div class="notice notice-success inline">
+				<p><strong><?php esc_html_e( 'Migrering klar!', 'sijab-tillbehor' ); ?></strong></p>
+				<p>
+					<?php echo sprintf( esc_html__( 'Behandlade produkter: %d', 'sijab-tillbehor' ), $result['total'] ); ?><br>
+					<?php echo sprintf( esc_html__( 'Uppdaterade produkter: %d', 'sijab-tillbehor' ), $result['updated'] ); ?><br>
+					<?php echo sprintf( esc_html__( 'Inga ändringar behövdes: %d', 'sijab-tillbehor' ), $result['skipped'] ); ?>
+				</p>
+				<?php if ( ! empty( $result['details'] ) ) : ?>
+					<table class="widefat striped" style="margin-top: 12px; max-width: 600px;">
+						<thead><tr><th><?php esc_html_e( 'Produkt', 'sijab-tillbehor' ); ?></th><th><?php esc_html_e( 'Tillagda (ID)', 'sijab-tillbehor' ); ?></th></tr></thead>
+						<tbody>
+							<?php foreach ( $result['details'] as $bundle_id => $added_ids ) : ?>
+								<tr>
+									<td><a href="<?php echo get_edit_post_link( $bundle_id ); ?>"><?php echo esc_html( get_the_title( $bundle_id ) ); ?></a></td>
+									<td><?php echo implode( ', ', array_map( 'absint', $added_ids ) ); ?></td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				<?php endif; ?>
+			</div>
+		<?php endif; ?>
+
+		<?php if ( ! $exists ) : ?>
+			<p class="description" style="color: #999;"><?php esc_html_e( 'WooCommerce Product Bundles är inte installerat — migrering ej tillgänglig.', 'sijab-tillbehor' ); ?></p>
+		<?php else : ?>
+			<form method="post">
+				<?php wp_nonce_field( 'sijab_run_migration', 'sijab_migration_nonce' ); ?>
+				<?php submit_button( __( 'Kör migrering', 'sijab-tillbehor' ), 'secondary', 'sijab_run_migration', false ); ?>
+			</form>
+		<?php endif; ?>
+		<?php
+	}
+
+	/**
+	 * Handle migration POST.
+	 */
+	public function handle_migration(): void {
+		if ( ! isset( $_POST['sijab_run_migration'] ) ) return;
+		if ( ! check_admin_referer( 'sijab_run_migration', 'sijab_migration_nonce' ) ) return;
+		if ( ! current_user_can( 'manage_woocommerce' ) ) return;
+
+		global $wpdb;
+		$table = $wpdb->prefix . 'woocommerce_bundled_items';
+
+		$rows = $wpdb->get_results( "SELECT bundle_id, product_id FROM {$table} ORDER BY bundle_id ASC", ARRAY_A );
+
+		$bundles = [];
+		foreach ( (array) $rows as $row ) {
+			$bundles[ (int) $row['bundle_id'] ][] = (int) $row['product_id'];
+		}
+
+		$total = count( $bundles ); $updated = 0; $skipped = 0; $details = [];
+
+		foreach ( $bundles as $bundle_id => $product_ids ) {
+			$existing = get_post_meta( $bundle_id, '_crosssells', true );
+			if ( ! is_array( $existing ) ) $existing = [];
+
+			$merged = array_values( array_filter( array_unique( array_map( 'absint', array_merge( $existing, $product_ids ) ) ), fn( $id ) => $id > 0 && $id !== $bundle_id ) );
+			$added  = array_diff( $merged, $existing );
+
+			if ( empty( $added ) ) { $skipped++; continue; }
+
+			update_post_meta( $bundle_id, '_crosssells', $merged );
+			$updated++;
+			$details[ $bundle_id ] = array_values( $added );
+		}
+
+		set_transient( 'sijab_migration_result', compact( 'total', 'updated', 'skipped', 'details' ), 60 );
+		wp_redirect( add_query_arg( [ 'page' => 'sijab-tillbehor-settings', 'migrated' => '1' ], admin_url( 'admin.php' ) ) );
+		exit;
 	}
 
 	// ──────────────────────────────────────────────────────────────
