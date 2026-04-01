@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
- * Author: SIJAB
- * Version: 2.15.0
+ * Author: HB
+ * Version: 2.15.1
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.15.0';
+	const VERSION       = '2.15.1';
 	const OPTION        = 'sijab_tillbehor_settings';
 
 	/** @var array|null Cached settings. */
@@ -960,6 +960,8 @@ class SIJAB_Tillbehor {
 						}, function(html) {
 							$('#postimagediv .inside').html(html);
 						});
+					} else if (d.collage_error) {
+						status.css('color', '#b45309').text('<?php echo esc_js( __( 'Text klar — bild misslyckades: ', 'sijab-tillbehor' ) ); ?>' + d.collage_error);
 					}
 				}).fail(function() {
 					btn.prop('disabled', false);
@@ -1103,11 +1105,52 @@ class SIJAB_Tillbehor {
 			'seo_text'          => sanitize_text_field( $content['seo_text'] ?? '' ),
 			'collage_id'        => $collage['id'] ?? 0,
 			'collage_url'       => $collage['url'] ?? '',
+			'collage_error'     => $collage['error'] ?? '',
 		] );
 	}
 
+	/**
+	 * Load a GD image resource from a local file path, with correct handling
+	 * for JPEG, PNG, GIF and WebP.
+	 *
+	 * @return \GdImage|false
+	 */
+	private function gd_from_path( string $filepath ) {
+		if ( ! file_exists( $filepath ) ) return false;
+
+		$info = @getimagesize( $filepath );
+		if ( ! $info ) return false;
+
+		switch ( $info[2] ) {
+			case IMAGETYPE_JPEG:
+				return function_exists( 'imagecreatefromjpeg' ) ? @imagecreatefromjpeg( $filepath ) : false;
+			case IMAGETYPE_PNG:
+				if ( ! function_exists( 'imagecreatefrompng' ) ) return false;
+				$img = @imagecreatefrompng( $filepath );
+				// Flatten PNG transparency onto white background.
+				if ( $img ) {
+					$w  = imagesx( $img );
+					$h  = imagesy( $img );
+					$bg = imagecreatetruecolor( $w, $h );
+					imagefill( $bg, 0, 0, imagecolorallocate( $bg, 255, 255, 255 ) );
+					imagecopy( $bg, $img, 0, 0, 0, 0, $w, $h );
+					imagedestroy( $img );
+					$img = $bg;
+				}
+				return $img;
+			case IMAGETYPE_GIF:
+				return function_exists( 'imagecreatefromgif' ) ? @imagecreatefromgif( $filepath ) : false;
+			case IMAGETYPE_WEBP:
+				return function_exists( 'imagecreatefromwebp' ) ? @imagecreatefromwebp( $filepath ) : false;
+			default:
+				return false;
+		}
+	}
+
 	private function generate_bundle_collage( int $product_id, array $items ): array {
-		if ( ! function_exists( 'imagecreatetruecolor' ) ) return [];
+		if ( ! function_exists( 'imagecreatetruecolor' ) ) {
+			return [ 'error' => 'PHP GD-tillägget är inte aktiverat på servern.' ];
+		}
 
 		$images = [];
 		foreach ( $items as $item ) {
@@ -1116,21 +1159,27 @@ class SIJAB_Tillbehor {
 			if ( ! $p || ! $p->get_image_id() ) continue;
 
 			$file = get_attached_file( $p->get_image_id() );
-			if ( $file && file_exists( $file ) ) {
-				// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-				$gd = @imagecreatefromstring( file_get_contents( $file ) );
-			} else {
-				$url      = wp_get_attachment_image_url( $p->get_image_id(), 'full' );
-				$response = $url ? wp_remote_get( $url, [ 'timeout' => 10 ] ) : null;
-				$gd       = ( $response && ! is_wp_error( $response ) )
-					? @imagecreatefromstring( wp_remote_retrieve_body( $response ) )
-					: false;
+			$gd   = ( $file && file_exists( $file ) ) ? $this->gd_from_path( $file ) : false;
+
+			// Fall back to downloading the image if local path failed.
+			if ( ! $gd ) {
+				$url      = wp_get_attachment_image_url( $p->get_image_id(), 'large' );
+				$response = $url ? wp_remote_get( $url, [ 'timeout' => 15 ] ) : null;
+				if ( $response && ! is_wp_error( $response ) ) {
+					$tmp = wp_tempnam( 'sijab-collage-' );
+					// phpcs:ignore WordPress.WP.AlternativeFunctions
+					file_put_contents( $tmp, wp_remote_retrieve_body( $response ) );
+					$gd = $this->gd_from_path( $tmp );
+					@unlink( $tmp );
+				}
 			}
 
 			if ( $gd ) $images[] = $gd;
 		}
 
-		if ( empty( $images ) ) return [];
+		if ( empty( $images ) ) {
+			return [ 'error' => 'Inga bilder hittades för ingående produkter (kontrollera att produkterna har produktbilder).' ];
+		}
 
 		$cell  = 400;
 		$count = count( $images );
@@ -1147,8 +1196,8 @@ class SIJAB_Tillbehor {
 			$sw    = imagesx( $gd );
 			$sh    = imagesy( $gd );
 			$scale = min( $cell / $sw, $cell / $sh );
-			$dw    = (int) round( $sw * $scale );
-			$dh    = (int) round( $sh * $scale );
+			$dw    = max( 1, (int) round( $sw * $scale ) );
+			$dh    = max( 1, (int) round( $sh * $scale ) );
 			$dx    = $col * $cell + (int) round( ( $cell - $dw ) / 2 );
 			$dy    = $row * $cell + (int) round( ( $cell - $dh ) / 2 );
 			imagecopyresampled( $canvas, $gd, $dx, $dy, 0, 0, $dw, $dh, $sw, $sh );
@@ -1160,10 +1209,11 @@ class SIJAB_Tillbehor {
 		$filepath = trailingslashit( $upload['path'] ) . $filename;
 		$fileurl  = trailingslashit( $upload['url'] ) . $filename;
 
-		imagejpeg( $canvas, $filepath, 90 );
+		if ( ! imagejpeg( $canvas, $filepath, 90 ) ) {
+			imagedestroy( $canvas );
+			return [ 'error' => 'Kunde inte spara kollage-bilden (kontrollera skrivrättigheter till uploads-mappen).' ];
+		}
 		imagedestroy( $canvas );
-
-		if ( ! file_exists( $filepath ) ) return [];
 
 		$attach_id = wp_insert_attachment( [
 			'post_mime_type' => 'image/jpeg',
@@ -1172,7 +1222,9 @@ class SIJAB_Tillbehor {
 			'post_status'    => 'inherit',
 		], $filepath, $product_id );
 
-		if ( is_wp_error( $attach_id ) ) return [];
+		if ( is_wp_error( $attach_id ) ) {
+			return [ 'error' => 'wp_insert_attachment misslyckades: ' . $attach_id->get_error_message() ];
+		}
 
 		require_once ABSPATH . 'wp-admin/includes/image.php';
 		wp_update_attachment_metadata( $attach_id, wp_generate_attachment_metadata( $attach_id, $filepath ) );
