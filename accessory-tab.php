@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.15.1
+ * Version: 2.15.2
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.15.1';
+	const VERSION       = '2.15.2';
 	const OPTION        = 'sijab_tillbehor_settings';
 
 	/** @var array|null Cached settings. */
@@ -167,135 +167,204 @@ class SIJAB_Tillbehor {
 	 * Render the settings page.
 	 */
 	public function render_settings_page(): void {
-		$s = $this->get_settings();
+		$s        = $this->get_settings();
 		$gh_token = get_option( 'sijab_tillbehor_github_token', '' );
+		$ai_key   = get_option( 'sijab_openai_api_key', '' );
 		?>
 		<div class="wrap">
-			<h1><?php esc_html_e( 'Tillbehör — Inställningar', 'sijab-tillbehor' ); ?></h1>
-			<form method="post" action="options.php">
-				<?php settings_fields( 'sijab_tillbehor' ); ?>
+			<h1><?php esc_html_e( 'Accessory Tab — Inställningar', 'sijab-tillbehor' ); ?></h1>
 
-				<h2 class="title"><?php esc_html_e( 'Visning', 'sijab-tillbehor' ); ?></h2>
-				<table class="form-table" role="presentation">
-					<!-- Placement -->
-					<tr>
-						<th scope="row"><?php esc_html_e( 'Placering', 'sijab-tillbehor' ); ?></th>
-						<td>
-							<fieldset>
-								<label style="display:block; margin-bottom:8px;">
-									<input type="radio" name="<?php echo self::OPTION; ?>[placement]" value="after_summary" <?php checked( $s['placement'], 'after_summary' ); ?> />
-									<?php esc_html_e( 'Under "Lägg i kundvagn" (i produktinfo-kolumnen)', 'sijab-tillbehor' ); ?>
-								</label>
-								<label style="display:block; margin-bottom:8px;">
-									<input type="radio" name="<?php echo self::OPTION; ?>[placement]" value="before_tabs" <?php checked( $s['placement'], 'before_tabs' ); ?> />
-									<?php esc_html_e( 'Ovanför flikarna (full bredd)', 'sijab-tillbehor' ); ?>
-								</label>
-							</fieldset>
-							<p class="description"><?php esc_html_e( 'Välj var tillbehörssektionen ska visas på produktsidan.', 'sijab-tillbehor' ); ?></p>
-						</td>
-					</tr>
+			<nav class="nav-tab-wrapper sijab-settings-tabs" style="margin-bottom:0;">
+				<a href="#sijab-tab-visning"  class="nav-tab sijab-nav-tab" data-tab="visning"><?php esc_html_e( 'Visning', 'sijab-tillbehor' ); ?></a>
+				<a href="#sijab-tab-api"      class="nav-tab sijab-nav-tab" data-tab="api"><?php esc_html_e( 'API-inställningar', 'sijab-tillbehor' ); ?></a>
+				<a href="#sijab-tab-verktyg"  class="nav-tab sijab-nav-tab" data-tab="verktyg"><?php esc_html_e( 'Verktyg', 'sijab-tillbehor' ); ?></a>
+			</nav>
 
-					<!-- Title format -->
-					<tr>
-						<th scope="row"><?php esc_html_e( 'Rubrik', 'sijab-tillbehor' ); ?></th>
-						<td>
-							<fieldset>
-								<label style="display:block; margin-bottom:8px;">
-									<input type="radio" name="<?php echo self::OPTION; ?>[title_format]" value="with_name" <?php checked( $s['title_format'], 'with_name' ); ?> />
-									<?php esc_html_e( '"Tillbehör till [Produktnamn]"', 'sijab-tillbehor' ); ?>
-								</label>
-								<label style="display:block; margin-bottom:8px;">
-									<input type="radio" name="<?php echo self::OPTION; ?>[title_format]" value="simple" <?php checked( $s['title_format'], 'simple' ); ?> />
-									<?php esc_html_e( '"Tillbehör"', 'sijab-tillbehor' ); ?>
-								</label>
-								<label style="display:block; margin-bottom:8px;">
-									<input type="radio" name="<?php echo self::OPTION; ?>[title_format]" value="custom" <?php checked( $s['title_format'], 'custom' ); ?> />
-									<?php esc_html_e( 'Egen rubrik:', 'sijab-tillbehor' ); ?>
-									<input type="text" name="<?php echo self::OPTION; ?>[custom_title]" value="<?php echo esc_attr( $s['custom_title'] ); ?>" class="regular-text" placeholder="<?php esc_attr_e( 'T.ex. Komplettera med...', 'sijab-tillbehor' ); ?>" />
-								</label>
-							</fieldset>
-						</td>
-					</tr>
+			<div style="background:#fff; border:1px solid #c3c4c7; border-top:none; padding:0 0 8px;">
 
-					<!-- Layout -->
-					<tr>
-						<th scope="row"><?php esc_html_e( 'Layout', 'sijab-tillbehor' ); ?></th>
-						<td>
-							<fieldset>
-								<label style="display:block; margin-bottom:8px;">
-									<input type="radio" name="<?php echo self::OPTION; ?>[layout]" value="horizontal" <?php checked( $s['layout'], 'horizontal' ); ?> />
-									<?php esc_html_e( 'Kompakt horisontell (Dustin-stil)', 'sijab-tillbehor' ); ?>
-								</label>
-								<label style="display:block; margin-bottom:8px;">
-									<input type="radio" name="<?php echo self::OPTION; ?>[layout]" value="grid" <?php checked( $s['layout'], 'grid' ); ?> />
-									<?php esc_html_e( 'Bildrutnät (stora kort med bild)', 'sijab-tillbehor' ); ?>
-								</label>
-							</fieldset>
-						</td>
-					</tr>
+				<form method="post" action="options.php">
+					<?php settings_fields( 'sijab_tillbehor' ); ?>
 
-					<!-- Columns (only for grid) -->
-					<tr>
-						<th scope="row"><label for="sijab_columns"><?php esc_html_e( 'Antal kolumner', 'sijab-tillbehor' ); ?></label></th>
-						<td>
-							<select name="<?php echo self::OPTION; ?>[columns]" id="sijab_columns">
-								<?php for ( $i = 2; $i <= 6; $i++ ) : ?>
-									<option value="<?php echo $i; ?>" <?php selected( $s['columns'], $i ); ?>><?php echo $i; ?></option>
-								<?php endfor; ?>
-							</select>
-							<p class="description"><?php esc_html_e( 'Max antal kort per rad. Används bara för bildrutnät-layout.', 'sijab-tillbehor' ); ?></p>
-						</td>
-					</tr>
+					<!-- ── Flik: Visning ─────────────────────────── -->
+					<div id="sijab-tab-visning" class="sijab-tab-panel" style="padding:0 24px 8px;">
 
-					<!-- Max visible -->
-					<tr>
-						<th scope="row"><label for="sijab_max_visible"><?php esc_html_e( 'Synliga tillbehör', 'sijab-tillbehor' ); ?></label></th>
-						<td>
-							<select name="<?php echo self::OPTION; ?>[max_visible]" id="sijab_max_visible">
-								<?php for ( $i = 1; $i <= 12; $i++ ) : ?>
-									<option value="<?php echo $i; ?>" <?php selected( $s['max_visible'], $i ); ?>><?php echo $i; ?></option>
-								<?php endfor; ?>
-							</select>
-							<p class="description"><?php esc_html_e( 'Antal tillbehör som visas direkt. Resten döljs bakom "Visa alla tillbehör".', 'sijab-tillbehor' ); ?></p>
-						</td>
-					</tr>
-				</table>
+						<h2 style="padding-top:24px;"><?php esc_html_e( 'Visning', 'sijab-tillbehor' ); ?></h2>
+						<table class="form-table" role="presentation">
 
-				<h2 class="title"><?php esc_html_e( 'Uppdateringar', 'sijab-tillbehor' ); ?></h2>
-				<table class="form-table" role="presentation">
-					<tr>
-						<th scope="row"><label for="sijab_gh_token"><?php esc_html_e( 'GitHub-token', 'sijab-tillbehor' ); ?></label></th>
-						<td>
-							<input type="password" name="sijab_tillbehor_github_token" id="sijab_gh_token" value="<?php echo esc_attr( $gh_token ); ?>" class="regular-text" autocomplete="off" />
-							<p class="description">
-								<?php esc_html_e( 'Personal access token (classic) med "repo"-rättighet. Krävs för automatiska uppdateringar från privat GitHub-repo.', 'sijab-tillbehor' ); ?>
-							</p>
-						</td>
-					</tr>
-				</table>
+							<tr>
+								<th scope="row"><?php esc_html_e( 'Placering', 'sijab-tillbehor' ); ?></th>
+								<td>
+									<fieldset>
+										<label style="display:block; margin-bottom:8px;">
+											<input type="radio" name="<?php echo self::OPTION; ?>[placement]" value="after_summary" <?php checked( $s['placement'], 'after_summary' ); ?> />
+											<?php esc_html_e( 'Under "Lägg i kundvagn" (i produktinfo-kolumnen)', 'sijab-tillbehor' ); ?>
+										</label>
+										<label style="display:block; margin-bottom:8px;">
+											<input type="radio" name="<?php echo self::OPTION; ?>[placement]" value="before_tabs" <?php checked( $s['placement'], 'before_tabs' ); ?> />
+											<?php esc_html_e( 'Ovanför flikarna (full bredd)', 'sijab-tillbehor' ); ?>
+										</label>
+									</fieldset>
+									<p class="description"><?php esc_html_e( 'Välj var tillbehörssektionen ska visas på produktsidan.', 'sijab-tillbehor' ); ?></p>
+								</td>
+							</tr>
 
-				<h2 class="title"><?php esc_html_e( 'AI-generering', 'sijab-tillbehor' ); ?></h2>
-				<table class="form-table" role="presentation">
-					<tr>
-						<th scope="row"><label for="sijab_openai_key"><?php esc_html_e( 'OpenAI API-nyckel', 'sijab-tillbehor' ); ?></label></th>
-						<td>
-							<input type="password" name="sijab_openai_api_key" id="sijab_openai_key" value="<?php echo esc_attr( get_option( 'sijab_openai_api_key', '' ) ); ?>" class="regular-text" autocomplete="off" />
-							<p class="description">
-								<?php esc_html_e( 'Används för att AI-generera produkttitel, beskrivning och kollage-bild för paketprodukter. Hämta nyckeln från platform.openai.com.', 'sijab-tillbehor' ); ?>
-							</p>
-						</td>
-					</tr>
-				</table>
+							<tr>
+								<th scope="row"><?php esc_html_e( 'Rubrik', 'sijab-tillbehor' ); ?></th>
+								<td>
+									<fieldset>
+										<label style="display:block; margin-bottom:8px;">
+											<input type="radio" name="<?php echo self::OPTION; ?>[title_format]" value="with_name" <?php checked( $s['title_format'], 'with_name' ); ?> />
+											<?php esc_html_e( '"Tillbehör till [Produktnamn]"', 'sijab-tillbehor' ); ?>
+										</label>
+										<label style="display:block; margin-bottom:8px;">
+											<input type="radio" name="<?php echo self::OPTION; ?>[title_format]" value="simple" <?php checked( $s['title_format'], 'simple' ); ?> />
+											<?php esc_html_e( '"Tillbehör"', 'sijab-tillbehor' ); ?>
+										</label>
+										<label style="display:block; margin-bottom:8px;">
+											<input type="radio" name="<?php echo self::OPTION; ?>[title_format]" value="custom" <?php checked( $s['title_format'], 'custom' ); ?> />
+											<?php esc_html_e( 'Egen rubrik:', 'sijab-tillbehor' ); ?>
+											<input type="text" name="<?php echo self::OPTION; ?>[custom_title]" value="<?php echo esc_attr( $s['custom_title'] ); ?>" class="regular-text" placeholder="<?php esc_attr_e( 'T.ex. Komplettera med...', 'sijab-tillbehor' ); ?>" />
+										</label>
+									</fieldset>
+								</td>
+							</tr>
 
-				<?php submit_button( __( 'Spara inställningar', 'sijab-tillbehor' ) ); ?>
-			</form>
+							<tr>
+								<th scope="row"><?php esc_html_e( 'Layout', 'sijab-tillbehor' ); ?></th>
+								<td>
+									<fieldset>
+										<label style="display:block; margin-bottom:8px;">
+											<input type="radio" name="<?php echo self::OPTION; ?>[layout]" value="horizontal" <?php checked( $s['layout'], 'horizontal' ); ?> />
+											<?php esc_html_e( 'Kompakt horisontell (Dustin-stil)', 'sijab-tillbehor' ); ?>
+										</label>
+										<label style="display:block; margin-bottom:8px;">
+											<input type="radio" name="<?php echo self::OPTION; ?>[layout]" value="grid" <?php checked( $s['layout'], 'grid' ); ?> />
+											<?php esc_html_e( 'Bildrutnät (stora kort med bild)', 'sijab-tillbehor' ); ?>
+										</label>
+									</fieldset>
+								</td>
+							</tr>
 
-			<p class="description" style="margin-top: 24px;">
-				<?php printf( esc_html__( 'Pluginversion: %s', 'sijab-tillbehor' ), '<strong>' . self::VERSION . '</strong>' ); ?>
-			</p>
+							<tr>
+								<th scope="row"><label for="sijab_columns"><?php esc_html_e( 'Antal kolumner', 'sijab-tillbehor' ); ?></label></th>
+								<td>
+									<select name="<?php echo self::OPTION; ?>[columns]" id="sijab_columns">
+										<?php for ( $i = 2; $i <= 6; $i++ ) : ?>
+											<option value="<?php echo $i; ?>" <?php selected( $s['columns'], $i ); ?>><?php echo $i; ?></option>
+										<?php endfor; ?>
+									</select>
+									<p class="description"><?php esc_html_e( 'Max antal kort per rad. Används bara för bildrutnät-layout.', 'sijab-tillbehor' ); ?></p>
+								</td>
+							</tr>
 
-			<?php $this->render_migration_section(); ?>
-		</div>
+							<tr>
+								<th scope="row"><label for="sijab_max_visible"><?php esc_html_e( 'Synliga tillbehör', 'sijab-tillbehor' ); ?></label></th>
+								<td>
+									<select name="<?php echo self::OPTION; ?>[max_visible]" id="sijab_max_visible">
+										<?php for ( $i = 1; $i <= 12; $i++ ) : ?>
+											<option value="<?php echo $i; ?>" <?php selected( $s['max_visible'], $i ); ?>><?php echo $i; ?></option>
+										<?php endfor; ?>
+									</select>
+									<p class="description"><?php esc_html_e( 'Antal tillbehör som visas direkt. Resten döljs bakom "Visa alla tillbehör".', 'sijab-tillbehor' ); ?></p>
+								</td>
+							</tr>
+
+						</table>
+						<?php submit_button( __( 'Spara inställningar', 'sijab-tillbehor' ) ); ?>
+					</div>
+
+					<!-- ── Flik: API-inställningar ───────────────── -->
+					<div id="sijab-tab-api" class="sijab-tab-panel" style="padding:0 24px 8px; display:none;">
+
+						<!-- GitHub -->
+						<div style="margin-top:24px; padding:20px 24px; background:#f6f7f7; border:1px solid #dcdcde; border-radius:4px; max-width:700px;">
+							<h3 style="margin:0 0 4px; display:flex; align-items:center; gap:8px;">
+								<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/></svg>
+								GitHub
+							</h3>
+							<p style="margin:0 0 16px; color:#646970; font-size:13px;"><?php esc_html_e( 'Används för automatiska plugin-uppdateringar från GitHub-repot.', 'sijab-tillbehor' ); ?></p>
+							<table class="form-table" role="presentation" style="margin:0;">
+								<tr>
+									<th scope="row" style="width:180px;"><label for="sijab_gh_token"><?php esc_html_e( 'Personal access token', 'sijab-tillbehor' ); ?></label></th>
+									<td>
+										<input type="password" name="sijab_tillbehor_github_token" id="sijab_gh_token" value="<?php echo esc_attr( $gh_token ); ?>" class="regular-text" autocomplete="off" />
+										<p class="description"><?php esc_html_e( 'Classic token med "repo"-rättighet. Skapa på github.com → Settings → Developer settings → Personal access tokens.', 'sijab-tillbehor' ); ?></p>
+									</td>
+								</tr>
+							</table>
+						</div>
+
+						<!-- OpenAI -->
+						<div style="margin-top:16px; padding:20px 24px; background:#f6f7f7; border:1px solid #dcdcde; border-radius:4px; max-width:700px;">
+							<h3 style="margin:0 0 4px; display:flex; align-items:center; gap:8px;">
+								<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.677l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855l-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023l-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135l-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365l2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/></svg>
+								OpenAI
+							</h3>
+							<p style="margin:0 0 16px; color:#646970; font-size:13px;"><?php esc_html_e( 'Används för AI-generering av produkttitel, beskrivning och kollage-bild för paketprodukter.', 'sijab-tillbehor' ); ?></p>
+							<table class="form-table" role="presentation" style="margin:0;">
+								<tr>
+									<th scope="row" style="width:180px;"><label for="sijab_openai_key"><?php esc_html_e( 'API-nyckel', 'sijab-tillbehor' ); ?></label></th>
+									<td>
+										<input type="password" name="sijab_openai_api_key" id="sijab_openai_key" value="<?php echo esc_attr( $ai_key ); ?>" class="regular-text" autocomplete="off" />
+										<p class="description"><?php esc_html_e( 'Skapa nyckeln på platform.openai.com → API keys. Modell: gpt-4o.', 'sijab-tillbehor' ); ?></p>
+									</td>
+								</tr>
+							</table>
+							<?php if ( $ai_key ) : ?>
+								<p style="margin:12px 0 0; font-size:12px; color:#46b450;">&#10003; <?php esc_html_e( 'API-nyckel sparad', 'sijab-tillbehor' ); ?></p>
+							<?php else : ?>
+								<p style="margin:12px 0 0; font-size:12px; color:#646970;"><?php esc_html_e( 'Ingen nyckel sparad ännu.', 'sijab-tillbehor' ); ?></p>
+							<?php endif; ?>
+						</div>
+
+						<p style="margin-top:20px;">
+							<?php submit_button( __( 'Spara inställningar', 'sijab-tillbehor' ), 'primary', 'submit', false ); ?>
+						</p>
+					</div>
+
+					</form><!-- end settings form -->
+
+				<!-- ── Flik: Verktyg (egen form för migrering) ── -->
+				<div id="sijab-tab-verktyg" class="sijab-tab-panel" style="padding:0 24px 8px; display:none;">
+					<div style="margin-top:24px;">
+						<p class="description">
+							<?php printf( esc_html__( 'Pluginversion: %s', 'sijab-tillbehor' ), '<strong>' . self::VERSION . '</strong>' ); ?>
+							&nbsp;|&nbsp; <a href="https://github.com/stainzor/accessory-tab/releases" target="_blank"><?php esc_html_e( 'Versionshistorik', 'sijab-tillbehor' ); ?></a>
+						</p>
+					</div>
+					<?php $this->render_migration_section(); ?>
+				</div>
+
+			</div><!-- end white card -->
+
+		</div><!-- end .wrap -->
+
+		<script>
+		(function($) {
+			var storageKey = 'sijab_settings_tab';
+			var tabs       = $('.sijab-nav-tab');
+			var panels     = $('.sijab-tab-panel');
+
+			function activateTab(id) {
+				tabs.removeClass('nav-tab-active');
+				panels.hide();
+				tabs.filter('[data-tab="' + id + '"]').addClass('nav-tab-active');
+				$('#sijab-tab-' + id).show();
+				try { localStorage.setItem(storageKey, id); } catch(e) {}
+			}
+
+			// Restore last active tab.
+			var saved = '';
+			try { saved = localStorage.getItem(storageKey) || ''; } catch(e) {}
+			var hash = window.location.hash.replace('#sijab-tab-', '');
+			activateTab( hash || saved || 'visning' );
+
+			tabs.on('click', function(e) {
+				e.preventDefault();
+				activateTab($(this).data('tab'));
+			});
+		}(jQuery));
+		</script>
 		<?php
 	}
 
