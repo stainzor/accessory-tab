@@ -579,6 +579,60 @@
 }
 
 /* ══════════════════════════════════════════
+   VARIABLE PRODUCT — variant select
+   ══════════════════════════════════════════ */
+
+.sijab-acc-card__right--variable {
+	min-width: 260px;
+}
+
+.sijab-acc-card__var-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	justify-content: flex-end;
+}
+
+.sijab-var-select {
+	flex: 1;
+	min-width: 0;
+	height: 36px !important;
+	border: 1px solid #d0d0d0 !important;
+	border-radius: 6px !important;
+	padding: 0 10px !important;
+	font-size: 13px !important;
+	color: #333 !important;
+	background: #fff !important;
+	cursor: pointer;
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+.sijab-var-select:focus {
+	border-color: #0073aa !important;
+}
+
+.sijab-var-atc-btn:disabled {
+	opacity: 0.4 !important;
+	cursor: not-allowed !important;
+	pointer-events: none;
+}
+
+@media (max-width: 600px) {
+	.sijab-acc-card__right--variable {
+		min-width: unset;
+		width: 100%;
+	}
+	.sijab-acc-card__var-row {
+		flex-wrap: wrap;
+	}
+	.sijab-var-select {
+		width: 100% !important;
+		flex: unset;
+	}
+}
+
+/* ══════════════════════════════════════════
    BUNDLE SECTION — bygger på accessory-stilen
    ══════════════════════════════════════════ */
 

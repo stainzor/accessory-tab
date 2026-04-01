@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.15.6
+ * Version: 2.16.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.15.6';
+	const VERSION       = '2.16.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 
 	/** @var array|null Cached settings. */
@@ -551,21 +551,24 @@ class SIJAB_Tillbehor {
 	 * Render a single accessory product card.
 	 */
 	private function render_accessory_card( WC_Product $acc ): void {
-		$id           = $acc->get_id();
-		$link         = get_permalink( $id );
-		$title        = $acc->get_name();
-		$image_id     = $acc->get_image_id();
-		$image_url    = $image_id
+		$id          = $acc->get_id();
+		$link        = get_permalink( $id );
+		$title       = $acc->get_name();
+		$image_id    = $acc->get_image_id();
+		$image_url   = $image_id
 			? wp_get_attachment_image_url( $image_id, 'woocommerce_thumbnail' )
 			: wc_placeholder_img_src( 'woocommerce_thumbnail' );
-		$price_html   = $acc->get_price_html();
-		$sku          = $acc->get_sku();
-		$is_simple    = $acc->is_type( 'simple' ) && $acc->is_purchasable() && $acc->is_in_stock();
-		$stock_status = $acc->get_stock_status();
+		$price_html  = $acc->get_price_html();
+		$sku         = $acc->get_sku();
+		$is_simple   = $acc->is_type( 'simple' ) && $acc->is_purchasable() && $acc->is_in_stock();
+		$is_variable = $acc->is_type( 'variable' );
 
+		// Stock badge — variable products start empty (updated by JS on variant select).
+		$stock_status = $is_variable ? '' : $acc->get_stock_status();
 		switch ( $stock_status ) {
 			case 'instock':     $stock_label = __( 'I lager', 'sijab-tillbehor' ); break;
 			case 'onbackorder': $stock_label = __( 'Beställningsvara', 'sijab-tillbehor' ); break;
+			case '':            $stock_label = ''; break;
 			default:            $stock_label = __( 'Slut i lager', 'sijab-tillbehor' );
 		}
 		?>
@@ -583,15 +586,16 @@ class SIJAB_Tillbehor {
 					<?php endif; ?>
 				</div>
 				<div class="sijab-acc-card__meta">
-					<span class="sijab-acc-card__stock sijab-acc-card__stock--<?php echo esc_attr( $stock_status ); ?>">
+					<span class="sijab-acc-card__stock<?php echo $stock_status ? ' sijab-acc-card__stock--' . esc_attr( $stock_status ) : ''; ?>">
 						<?php echo esc_html( $stock_label ); ?>
 					</span>
 					<?php if ( $sku ) : ?>
 						<span class="sijab-acc-card__sku"><?php echo esc_html( 'Art.nr: ' . $sku ); ?></span>
 					<?php endif; ?>
 				</div>
-				<div class="sijab-acc-card__right">
-					<?php if ( $is_simple ) : ?>
+
+				<?php if ( $is_simple ) : ?>
+					<div class="sijab-acc-card__right">
 						<div class="sijab-acc-card__qty-row">
 							<div class="sijab-acc-card__qty">
 								<button type="button" class="sijab-qty-btn sijab-qty-minus" aria-label="<?php esc_attr_e( 'Minska antal', 'sijab-tillbehor' ); ?>">−</button>
@@ -608,14 +612,62 @@ class SIJAB_Tillbehor {
 								<?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?>
 							</a>
 						</div>
-					<?php else : ?>
+					</div>
+
+				<?php elseif ( $is_variable ) : ?>
+					<?php $variations = $acc->get_available_variations(); ?>
+					<div class="sijab-acc-card__right sijab-acc-card__right--variable">
+						<div class="sijab-acc-card__var-row">
+							<select class="sijab-var-select"
+							        data-product-id="<?php echo absint( $id ); ?>"
+							        aria-label="<?php esc_attr_e( 'Välj variant', 'sijab-tillbehor' ); ?>">
+								<option value=""><?php esc_html_e( 'Välj variant...', 'sijab-tillbehor' ); ?></option>
+								<?php foreach ( $variations as $v ) :
+									$attr_parts = [];
+									foreach ( $v['attributes'] as $attr_key => $attr_val ) {
+										if ( ! $attr_val ) continue;
+										$taxonomy = str_replace( 'attribute_', '', $attr_key );
+										if ( taxonomy_exists( $taxonomy ) ) {
+											$term         = get_term_by( 'slug', $attr_val, $taxonomy );
+											$attr_parts[] = $term ? $term->name : ucfirst( str_replace( '-', ' ', $attr_val ) );
+										} else {
+											$attr_parts[] = $attr_val;
+										}
+									}
+									$v_label       = ! empty( $attr_parts ) ? implode( ' / ', $attr_parts ) : '#' . $v['variation_id'];
+									$v_stock       = $v['is_in_stock'] ? 'instock' : 'outofstock';
+									$v_stock_label = $v['is_in_stock'] ? __( 'I lager', 'sijab-tillbehor' ) : __( 'Slut i lager', 'sijab-tillbehor' );
+									?>
+									<option value="<?php echo absint( $v['variation_id'] ); ?>"
+									        data-price-html="<?php echo esc_attr( $v['price_html'] ); ?>"
+									        data-stock="<?php echo esc_attr( $v_stock ); ?>"
+									        data-stock-label="<?php echo esc_attr( $v_stock_label ); ?>"
+									        data-purchasable="<?php echo ( $v['is_purchasable'] && $v['is_in_stock'] ) ? '1' : '0'; ?>"
+									        data-attributes="<?php echo esc_attr( wp_json_encode( $v['attributes'] ) ); ?>"
+									        <?php echo ! $v['is_purchasable'] ? 'disabled' : ''; ?>>
+										<?php echo esc_html( $v_label ); ?>
+									</option>
+								<?php endforeach; ?>
+							</select>
+							<button type="button"
+							        class="button sijab-acc-atc-btn sijab-var-atc-btn"
+							        data-parent-id="<?php echo absint( $id ); ?>"
+							        disabled>
+								<?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?>
+							</button>
+						</div>
+					</div>
+
+				<?php else : ?>
+					<div class="sijab-acc-card__right">
 						<div class="sijab-acc-card__qty-row">
 							<a href="<?php echo esc_url( $link ); ?>" class="button sijab-acc-atc-btn">
 								<?php esc_html_e( 'Visa produkt', 'sijab-tillbehor' ); ?>
 							</a>
 						</div>
-					<?php endif; ?>
-				</div>
+					</div>
+				<?php endif; ?>
+
 			</div>
 		</div>
 		<?php

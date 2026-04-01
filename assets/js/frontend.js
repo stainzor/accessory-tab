@@ -109,6 +109,79 @@
 		}
 	});
 
+	// ── Variable product: update price + stock on variant select ──
+	document.addEventListener('change', function (e) {
+		var select = e.target.closest('.sijab-var-select');
+		if (!select) return;
+
+		var card     = select.closest('.sijab-acc-card');
+		var selected = select.options[select.selectedIndex];
+		var varId    = select.value;
+
+		// Price
+		var priceHtml = selected.getAttribute('data-price-html');
+		var priceEl   = card.querySelector('.sijab-acc-card__price');
+		if (priceEl && priceHtml) priceEl.innerHTML = priceHtml;
+
+		// Stock badge
+		var stockStatus = selected.getAttribute('data-stock') || '';
+		var stockLabel  = selected.getAttribute('data-stock-label') || '';
+		var stockEl     = card.querySelector('.sijab-acc-card__stock');
+		if (stockEl) {
+			stockEl.className = 'sijab-acc-card__stock' + (stockStatus ? ' sijab-acc-card__stock--' + stockStatus : '');
+			stockEl.textContent = stockLabel;
+		}
+
+		// Enable/disable add-to-cart button
+		var btn        = card.querySelector('.sijab-var-atc-btn');
+		var purchasable = varId && selected.getAttribute('data-purchasable') === '1';
+		if (btn) btn.disabled = !purchasable;
+	});
+
+	// ── Variable product: AJAX add to cart ──
+	document.addEventListener('click', function (e) {
+		var btn = e.target.closest('.sijab-var-atc-btn');
+		if (!btn || btn.disabled) return;
+		e.preventDefault();
+
+		var card     = btn.closest('.sijab-acc-card');
+		var select   = card ? card.querySelector('.sijab-var-select') : null;
+		if (!select || !select.value) return;
+
+		var varId    = select.value;
+		var parentId = btn.getAttribute('data-parent-id');
+		var selected = select.options[select.selectedIndex];
+		var attrs    = {};
+		try { attrs = JSON.parse(selected.getAttribute('data-attributes') || '{}'); } catch (err) {}
+
+		btn.disabled    = true;
+		btn.textContent = '…';
+
+		var wcUrl = (typeof wc_add_to_cart_params !== 'undefined' && wc_add_to_cart_params.wc_ajax_url)
+			? wc_add_to_cart_params.wc_ajax_url.replace('%%endpoint%%', 'add_to_cart')
+			: '/?wc-ajax=add_to_cart';
+
+		var body = new FormData();
+		body.append('product_id',   parentId);
+		body.append('variation_id', varId);
+		body.append('quantity',     '1');
+		Object.keys(attrs).forEach(function (key) { body.append(key, attrs[key]); });
+
+		fetch(wcUrl, { method: 'POST', body: body })
+			.then(function (r) { return r.json(); })
+			.then(function (res) {
+				btn.disabled    = false;
+				btn.textContent = 'Lägg till';
+				if (res && res.fragments && typeof jQuery !== 'undefined') {
+					jQuery(document.body).trigger('added_to_cart', [res.fragments, res.cart_hash, jQuery(btn)]);
+				}
+			})
+			.catch(function () {
+				btn.disabled    = false;
+				btn.textContent = 'Lägg till';
+			});
+	});
+
 	// Init mobile toggle when DOM is ready
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', initMobileToggle);
