@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.15.4
+ * Version: 2.15.5
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.15.4';
+	const VERSION       = '2.15.5';
 	const OPTION        = 'sijab_tillbehor_settings';
 
 	/** @var array|null Cached settings. */
@@ -1304,59 +1304,31 @@ class SIJAB_Tillbehor {
 
 		$items = $this->get_bundle_items( $product->get_id() );
 		if ( empty( $items ) ) return;
-
-		$total_regular = 0.0;
-		foreach ( $items as $item ) {
-			$p = wc_get_product( $item['product_id'] );
-			if ( ! $p ) continue;
-			$total_regular += (float) $p->get_price() * $item['qty_default'];
-		}
-
-		$bundle_price = (float) $product->get_price();
-		$savings      = $total_regular - $bundle_price;
 		?>
-		<section class="sijab-accessories-section sijab-accessories-section--horizontal sijab-bundle-section">
-			<h2 class="sijab-accessories-section__title"><?php esc_html_e( 'Paketet innehåller', 'sijab-tillbehor' ); ?></h2>
-			<div class="sijab-accessories-section__list">
+		<div class="sijab-bundle-list">
+			<p class="sijab-bundle-list__title"><?php esc_html_e( 'Paketet innehåller', 'sijab-tillbehor' ); ?></p>
+			<ul class="sijab-bundle-list__items">
 				<?php foreach ( $items as $item ) :
 					$p = wc_get_product( $item['product_id'] );
 					if ( ! $p ) continue;
-					$img        = $p->get_image_id() ? wp_get_attachment_image_url( $p->get_image_id(), 'woocommerce_thumbnail' ) : wc_placeholder_img_src( 'woocommerce_thumbnail' );
-					$link       = get_permalink( $p->get_id() );
-					$line_price = (float) $p->get_price() * $item['qty_default'];
+					$img  = $p->get_image_id()
+						? wp_get_attachment_image_url( $p->get_image_id(), 'thumbnail' )
+						: wc_placeholder_img_src( 'thumbnail' );
+					$link = get_permalink( $p->get_id() );
 					?>
-					<div class="sijab-acc-item">
-						<div class="sijab-acc-card">
-							<a href="<?php echo esc_url( $link ); ?>" class="sijab-acc-card__image">
-								<img src="<?php echo esc_url( $img ); ?>" alt="<?php echo esc_attr( $p->get_name() ); ?>" />
-							</a>
-							<div class="sijab-acc-card__body">
-								<div class="sijab-acc-card__details">
-									<a href="<?php echo esc_url( $link ); ?>" class="sijab-acc-card__name"><?php echo esc_html( $p->get_name() ); ?></a>
-									<?php if ( $line_price > 0 ) : ?>
-										<div class="sijab-acc-card__price"><?php echo wc_price( $line_price ); ?></div>
-									<?php endif; ?>
-								</div>
-								<?php if ( $p->get_sku() ) : ?>
-									<div class="sijab-acc-card__meta">
-										<span class="sijab-acc-card__sku"><?php echo esc_html( 'Art.nr: ' . $p->get_sku() ); ?></span>
-									</div>
-								<?php endif; ?>
-								<div class="sijab-acc-card__right sijab-bundle-qty-badge">
-									<span class="sijab-bundle-qty"><?php echo absint( $item['qty_default'] ); ?> <?php esc_html_e( 'st', 'sijab-tillbehor' ); ?></span>
-								</div>
-							</div>
-						</div>
-					</div>
+					<li class="sijab-bundle-list__item">
+						<img src="<?php echo esc_url( $img ); ?>" alt="<?php echo esc_attr( $p->get_name() ); ?>" class="sijab-bundle-list__img" loading="lazy" />
+						<span class="sijab-bundle-list__name">
+							<a href="<?php echo esc_url( $link ); ?>"><?php echo esc_html( $p->get_name() ); ?></a>
+							<?php if ( $p->get_sku() ) : ?>
+								<span class="sijab-bundle-list__sku"><?php echo esc_html( 'Art.nr: ' . $p->get_sku() ); ?></span>
+							<?php endif; ?>
+						</span>
+						<span class="sijab-bundle-list__qty"><?php echo absint( $item['qty_default'] ); ?> <?php esc_html_e( 'st', 'sijab-tillbehor' ); ?></span>
+					</li>
 				<?php endforeach; ?>
-			</div>
-			<?php if ( $total_regular > 0 && $savings > 0.01 ) : ?>
-				<div class="sijab-bundle-section__summary">
-					<span class="sijab-bundle-section__regular"><?php esc_html_e( 'Ordinarie värde:', 'sijab-tillbehor' ); ?> <del><?php echo wc_price( $total_regular ); ?></del></span>
-					<span class="sijab-bundle-section__saving"><?php printf( esc_html__( 'Du sparar %s', 'sijab-tillbehor' ), wc_price( $savings ) ); ?></span>
-				</div>
-			<?php endif; ?>
-		</section>
+			</ul>
+		</div>
 		<?php
 	}
 
