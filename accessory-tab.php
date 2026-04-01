@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: SIJAB
- * Version: 2.14.3
+ * Version: 2.15.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.14.3';
+	const VERSION       = '2.15.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 
 	/** @var array|null Cached settings. */
@@ -53,6 +53,9 @@ class SIJAB_Tillbehor {
 		add_filter( 'woocommerce_product_data_tabs', [ $this, 'add_bundle_admin_tab' ] );
 		add_action( 'woocommerce_product_data_panels', [ $this, 'render_bundle_admin_panel' ] );
 		add_action( 'woocommerce_admin_process_product_object', [ $this, 'save_bundle_data' ] );
+
+		// AI-generering.
+		add_action( 'wp_ajax_sijab_generate_bundle_content', [ $this, 'ajax_generate_bundle_content' ] );
 
 		// Frontend: paketprodukter.
 		add_action( 'woocommerce_single_product_summary', [ $this, 'render_bundle_section' ], 25 );
@@ -111,8 +114,14 @@ class SIJAB_Tillbehor {
 			'sanitize_callback' => [ $this, 'sanitize_settings' ],
 		] );
 
-		// GitHub token stored separately (not part of the main settings array).
+		// GitHub token stored separately.
 		register_setting( 'sijab_tillbehor', 'sijab_tillbehor_github_token', [
+			'type'              => 'string',
+			'sanitize_callback' => 'sanitize_text_field',
+		] );
+
+		// OpenAI API key.
+		register_setting( 'sijab_tillbehor', 'sijab_openai_api_key', [
 			'type'              => 'string',
 			'sanitize_callback' => 'sanitize_text_field',
 		] );
@@ -260,6 +269,19 @@ class SIJAB_Tillbehor {
 							<input type="password" name="sijab_tillbehor_github_token" id="sijab_gh_token" value="<?php echo esc_attr( $gh_token ); ?>" class="regular-text" autocomplete="off" />
 							<p class="description">
 								<?php esc_html_e( 'Personal access token (classic) med "repo"-rättighet. Krävs för automatiska uppdateringar från privat GitHub-repo.', 'sijab-tillbehor' ); ?>
+							</p>
+						</td>
+					</tr>
+				</table>
+
+				<h2 class="title"><?php esc_html_e( 'AI-generering', 'sijab-tillbehor' ); ?></h2>
+				<table class="form-table" role="presentation">
+					<tr>
+						<th scope="row"><label for="sijab_openai_key"><?php esc_html_e( 'OpenAI API-nyckel', 'sijab-tillbehor' ); ?></label></th>
+						<td>
+							<input type="password" name="sijab_openai_api_key" id="sijab_openai_key" value="<?php echo esc_attr( get_option( 'sijab_openai_api_key', '' ) ); ?>" class="regular-text" autocomplete="off" />
+							<p class="description">
+								<?php esc_html_e( 'Används för att AI-generera produkttitel, beskrivning och kollage-bild för paketprodukter. Hämta nyckeln från platform.openai.com.', 'sijab-tillbehor' ); ?>
 							</p>
 						</td>
 					</tr>
@@ -849,6 +871,26 @@ class SIJAB_Tillbehor {
 					<button type="button" class="button" id="sijab_add_bundle_row"><?php esc_html_e( '+ Lägg till produkt', 'sijab-tillbehor' ); ?></button>
 				</p>
 			</div>
+
+			<div id="sijab_ai_section" class="options_group" style="<?php echo $is_bundle ? '' : 'display:none;'; ?>">
+				<p style="padding: 10px 12px 0; font-weight: 600;"><?php esc_html_e( 'AI-genererat innehåll', 'sijab-tillbehor' ); ?></p>
+				<p style="padding: 6px 12px 4px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+					<button type="button" class="button button-primary" id="sijab_generate_ai_btn">
+						<?php esc_html_e( 'Generera med AI', 'sijab-tillbehor' ); ?>
+					</button>
+					<span id="sijab_ai_spinner" class="spinner" style="float:none; display:none;"></span>
+					<span id="sijab_ai_status" style="font-style:italic; color:#666; font-size:13px;"></span>
+				</p>
+				<?php if ( ! get_option( 'sijab_openai_api_key', '' ) ) : ?>
+					<p class="description" style="padding: 0 12px 12px; color:#a00;">
+						<?php esc_html_e( 'Ange en OpenAI API-nyckel under WooCommerce → Tillbehör → Inställningar.', 'sijab-tillbehor' ); ?>
+					</p>
+				<?php else : ?>
+					<p class="description" style="padding: 0 12px 12px;">
+						<?php esc_html_e( 'Genererar produkttitel, beskrivning, kort beskrivning och kollage-bild baserat på ingående produkter. Inget sparas förrän du klickar Uppdatera.', 'sijab-tillbehor' ); ?>
+					</p>
+				<?php endif; ?>
+			</div>
 		</div>
 
 		<script>
@@ -856,7 +898,74 @@ class SIJAB_Tillbehor {
 			var rowIndex = <?php echo max( count( $items ), 1 ); ?>;
 
 			$('#sijab_is_bundle').on('change', function() {
-				$('#sijab_bundle_items_wrap').toggle(this.checked);
+				$('#sijab_bundle_items_wrap, #sijab_ai_section').toggle(this.checked);
+			});
+
+			$('#sijab_generate_ai_btn').on('click', function() {
+				var btn    = $(this);
+				var spin   = $('#sijab_ai_spinner');
+				var status = $('#sijab_ai_status');
+				var postId = <?php echo absint( $post->ID ); ?>;
+
+				btn.prop('disabled', true);
+				spin.show();
+				status.css('color', '#666').text('<?php echo esc_js( __( 'Genererar — kan ta 10–20 sekunder…', 'sijab-tillbehor' ) ); ?>');
+
+				$.post(ajaxurl, {
+					action:     'sijab_generate_bundle_content',
+					nonce:      '<?php echo wp_create_nonce( 'sijab_generate_bundle' ); ?>',
+					product_id: postId
+				}, function(res) {
+					btn.prop('disabled', false);
+					spin.hide();
+
+					if (!res.success) {
+						status.css('color', '#a00').text(res.data || '<?php echo esc_js( __( 'Fel uppstod.', 'sijab-tillbehor' ) ); ?>');
+						return;
+					}
+
+					var d = res.data;
+					status.css('color', '#46b450').text('<?php echo esc_js( __( 'Klart! Granska innehållet och klicka Uppdatera för att spara.', 'sijab-tillbehor' ) ); ?>');
+
+					// Title
+					if (d.title) {
+						$('#title').val(d.title);
+					}
+
+					// Description (main content)
+					if (d.description) {
+						if (typeof tinymce !== 'undefined' && tinymce.get('content')) {
+							tinymce.get('content').setContent(d.description);
+						} else {
+							$('#content').val(d.description);
+						}
+					}
+
+					// Short description / excerpt
+					if (d.short_description) {
+						if (typeof tinymce !== 'undefined' && tinymce.get('excerpt')) {
+							tinymce.get('excerpt').setContent('<p>' + $('<span>').text(d.short_description).html() + '</p>');
+						} else {
+							$('#excerpt').val(d.short_description);
+						}
+					}
+
+					// Featured image (collage)
+					if (d.collage_id) {
+						$.post(ajaxurl, {
+							action:                          'set-post-thumbnail',
+							post_id:                         postId,
+							thumbnail_id:                    d.collage_id,
+							'_ajax_nonce-set-post-thumbnail': '<?php echo wp_create_nonce( 'set_post_thumbnail-' . absint( $post->ID ) ); ?>'
+						}, function(html) {
+							$('#postimagediv .inside').html(html);
+						});
+					}
+				}).fail(function() {
+					btn.prop('disabled', false);
+					spin.hide();
+					status.css('color', '#a00').text('<?php echo esc_js( __( 'Nätverksfel. Försök igen.', 'sijab-tillbehor' ) ); ?>');
+				});
 			});
 
 			$('#sijab_add_bundle_row').on('click', function() {
@@ -902,6 +1011,173 @@ class SIJAB_Tillbehor {
 		}
 
 		update_post_meta( $product->get_id(), self::BUNDLE_META, $items );
+	}
+
+	// ──────────────────────────────────────────────────────────────
+	// AI Content Generation
+	// ──────────────────────────────────────────────────────────────
+
+	public function ajax_generate_bundle_content(): void {
+		check_ajax_referer( 'sijab_generate_bundle', 'nonce' );
+		if ( ! current_user_can( 'edit_products' ) ) {
+			wp_send_json_error( 'Unauthorized' );
+		}
+
+		$product_id = absint( $_POST['product_id'] ?? 0 );
+		if ( ! $product_id ) {
+			wp_send_json_error( 'Inget produkt-ID.' );
+		}
+
+		$items = $this->get_bundle_items( $product_id );
+		if ( empty( $items ) ) {
+			wp_send_json_error( 'Paketet har inga ingående produkter.' );
+		}
+
+		$api_key = get_option( 'sijab_openai_api_key', '' );
+		if ( empty( $api_key ) ) {
+			wp_send_json_error( 'Ingen OpenAI API-nyckel konfigurerad. Ange den under WooCommerce → Tillbehör → Inställningar.' );
+		}
+
+		// Collect component data.
+		$lines = [];
+		foreach ( $items as $item ) {
+			$p = wc_get_product( $item['product_id'] );
+			if ( ! $p ) continue;
+			$desc  = mb_substr( wp_strip_all_tags( $p->get_description() ), 0, 300 );
+			$line  = sprintf( '- %s (antal: %d, SKU: %s, pris: %s kr)', $p->get_name(), $item['qty_default'], $p->get_sku() ?: '–', $p->get_price() );
+			if ( $desc ) $line .= "\n  Beskrivning: " . $desc;
+			$lines[] = $line;
+		}
+
+		$components_text = implode( "\n", $lines );
+
+		$prompt = "Du är en copywriter för ett B2B-företag som säljer professionell utrustning. " .
+		          "Nedan finns ingående produkter i ett paket. Skriv på svenska.\n\n" .
+		          "Ingående produkter:\n{$components_text}\n\n" .
+		          "Returnera ett JSON-objekt med exakt dessa nycklar:\n" .
+		          "- title: Kort produkttitel för paketet (max 80 tecken)\n" .
+		          "- description: Lång produktbeskrivning som HTML (2-3 stycken med <p>-taggar)\n" .
+		          "- short_description: Kort beskrivning för excerpt (1-2 meningar, ren text utan HTML)\n" .
+		          "- seo_text: SEO meta description (max 160 tecken, ren text)";
+
+		$response = wp_remote_post( 'https://api.openai.com/v1/chat/completions', [
+			'timeout' => 45,
+			'headers' => [
+				'Authorization' => 'Bearer ' . $api_key,
+				'Content-Type'  => 'application/json',
+			],
+			'body' => wp_json_encode( [
+				'model'           => 'gpt-4o',
+				'response_format' => [ 'type' => 'json_object' ],
+				'messages'        => [
+					[ 'role' => 'user', 'content' => $prompt ],
+				],
+				'max_tokens'      => 1000,
+			] ),
+		] );
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( $response->get_error_message() );
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( ! empty( $body['error'] ) ) {
+			wp_send_json_error( $body['error']['message'] ?? 'Fel från OpenAI.' );
+		}
+
+		$raw     = $body['choices'][0]['message']['content'] ?? '';
+		$content = json_decode( $raw, true );
+
+		if ( ! is_array( $content ) ) {
+			wp_send_json_error( 'Kunde inte tolka svar från OpenAI.' );
+		}
+
+		// Generate collage image.
+		$collage = $this->generate_bundle_collage( $product_id, $items );
+
+		wp_send_json_success( [
+			'title'             => sanitize_text_field( $content['title'] ?? '' ),
+			'description'       => wp_kses_post( $content['description'] ?? '' ),
+			'short_description' => sanitize_text_field( $content['short_description'] ?? '' ),
+			'seo_text'          => sanitize_text_field( $content['seo_text'] ?? '' ),
+			'collage_id'        => $collage['id'] ?? 0,
+			'collage_url'       => $collage['url'] ?? '',
+		] );
+	}
+
+	private function generate_bundle_collage( int $product_id, array $items ): array {
+		if ( ! function_exists( 'imagecreatetruecolor' ) ) return [];
+
+		$images = [];
+		foreach ( $items as $item ) {
+			if ( count( $images ) >= 4 ) break;
+			$p = wc_get_product( $item['product_id'] );
+			if ( ! $p || ! $p->get_image_id() ) continue;
+
+			$file = get_attached_file( $p->get_image_id() );
+			if ( $file && file_exists( $file ) ) {
+				// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+				$gd = @imagecreatefromstring( file_get_contents( $file ) );
+			} else {
+				$url      = wp_get_attachment_image_url( $p->get_image_id(), 'full' );
+				$response = $url ? wp_remote_get( $url, [ 'timeout' => 10 ] ) : null;
+				$gd       = ( $response && ! is_wp_error( $response ) )
+					? @imagecreatefromstring( wp_remote_retrieve_body( $response ) )
+					: false;
+			}
+
+			if ( $gd ) $images[] = $gd;
+		}
+
+		if ( empty( $images ) ) return [];
+
+		$cell  = 400;
+		$count = count( $images );
+		$cols  = $count > 1 ? 2 : 1;
+		$rows  = (int) ceil( $count / $cols );
+
+		$canvas = imagecreatetruecolor( $cols * $cell, $rows * $cell );
+		$white  = imagecolorallocate( $canvas, 255, 255, 255 );
+		imagefill( $canvas, 0, 0, $white );
+
+		foreach ( $images as $i => $gd ) {
+			$col   = $i % $cols;
+			$row   = (int) floor( $i / $cols );
+			$sw    = imagesx( $gd );
+			$sh    = imagesy( $gd );
+			$scale = min( $cell / $sw, $cell / $sh );
+			$dw    = (int) round( $sw * $scale );
+			$dh    = (int) round( $sh * $scale );
+			$dx    = $col * $cell + (int) round( ( $cell - $dw ) / 2 );
+			$dy    = $row * $cell + (int) round( ( $cell - $dh ) / 2 );
+			imagecopyresampled( $canvas, $gd, $dx, $dy, 0, 0, $dw, $dh, $sw, $sh );
+			imagedestroy( $gd );
+		}
+
+		$upload   = wp_upload_dir();
+		$filename = 'bundle-collage-' . $product_id . '-' . time() . '.jpg';
+		$filepath = trailingslashit( $upload['path'] ) . $filename;
+		$fileurl  = trailingslashit( $upload['url'] ) . $filename;
+
+		imagejpeg( $canvas, $filepath, 90 );
+		imagedestroy( $canvas );
+
+		if ( ! file_exists( $filepath ) ) return [];
+
+		$attach_id = wp_insert_attachment( [
+			'post_mime_type' => 'image/jpeg',
+			'post_title'     => get_the_title( $product_id ) . ' — kollage',
+			'post_content'   => '',
+			'post_status'    => 'inherit',
+		], $filepath, $product_id );
+
+		if ( is_wp_error( $attach_id ) ) return [];
+
+		require_once ABSPATH . 'wp-admin/includes/image.php';
+		wp_update_attachment_metadata( $attach_id, wp_generate_attachment_metadata( $attach_id, $filepath ) );
+
+		return [ 'id' => $attach_id, 'url' => $fileurl ];
 	}
 
 	// ──────────────────────────────────────────────────────────────
