@@ -182,6 +182,54 @@
 			});
 	});
 
+	// ── Statistics tracking ──
+	function getAccessoryId(el) {
+		var card = el.closest('.sijab-acc-card');
+		return card ? card.getAttribute('data-accessory-id') : null;
+	}
+
+	function trackEvent(accessoryId, eventType) {
+		if (typeof sijabAccStats === 'undefined' || !accessoryId) return;
+		var data = 'action=sijab_acc_track'
+			+ '&parent_id=' + encodeURIComponent(sijabAccStats.parent_id)
+			+ '&accessory_id=' + encodeURIComponent(accessoryId)
+			+ '&event_type=' + encodeURIComponent(eventType);
+		if (navigator.sendBeacon) {
+			navigator.sendBeacon(
+				sijabAccStats.ajax_url,
+				new Blob([data], { type: 'application/x-www-form-urlencoded' })
+			);
+		}
+	}
+
+	// Track: "Lägg till" (simple product add to cart).
+	document.addEventListener('click', function (e) {
+		var btn = e.target.closest('.sijab-acc-atc');
+		if (!btn) return;
+		trackEvent(getAccessoryId(btn), 'add_to_cart');
+	});
+
+	// Track: "Lägg till" (variable product add to cart).
+	document.addEventListener('click', function (e) {
+		var btn = e.target.closest('.sijab-var-atc-btn');
+		if (!btn || btn.disabled) return;
+		trackEvent(getAccessoryId(btn), 'add_to_cart');
+	});
+
+	// Track: "Visa produkt" button click.
+	document.addEventListener('click', function (e) {
+		var btn = e.target.closest('.sijab-acc-atc-btn:not(.sijab-acc-atc):not(.sijab-var-atc-btn)');
+		if (!btn) return;
+		trackEvent(getAccessoryId(btn), 'view_product');
+	});
+
+	// Track: product name or image click.
+	document.addEventListener('click', function (e) {
+		var link = e.target.closest('.sijab-acc-card__name, .sijab-acc-card__image');
+		if (!link) return;
+		trackEvent(getAccessoryId(link), 'product_click');
+	});
+
 	// Init mobile toggle when DOM is ready
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', initMobileToggle);

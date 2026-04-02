@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.16.0
+ * Version: 2.17.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,8 +32,9 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.16.0';
+	const VERSION       = '2.17.0';
 	const OPTION        = 'sijab_tillbehor_settings';
+	const STATS_TABLE   = 'sijab_acc_stats';
 
 	/** @var array|null Cached settings. */
 	private $settings = null;
@@ -64,6 +65,11 @@ class SIJAB_Tillbehor {
 		add_action( 'admin_menu', [ $this, 'register_settings_menu' ] );
 		add_action( 'admin_init', [ $this, 'register_settings' ] );
 		add_action( 'admin_init', [ $this, 'handle_migration' ] );
+
+		// Stats: AJAX tracking + cleanup cron.
+		add_action( 'wp_ajax_sijab_acc_track', [ $this, 'ajax_track_event' ] );
+		add_action( 'wp_ajax_nopriv_sijab_acc_track', [ $this, 'ajax_track_event' ] );
+		add_action( 'sijab_acc_stats_cleanup', [ $this, 'cleanup_old_stats' ] );
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -102,6 +108,16 @@ class SIJAB_Tillbehor {
 			'manage_woocommerce',
 			'sijab-tillbehor-settings',
 			[ $this, 'render_settings_page' ]
+		);
+
+		// Hidden submenu for stats page (accessible via tab).
+		add_submenu_page(
+			'',
+			__( 'Tillbehör — Statistik', 'sijab-tillbehor' ),
+			'',
+			'manage_woocommerce',
+			'sijab-tillbehor-stats',
+			[ $this, 'render_stats_page' ]
 		);
 	}
 
@@ -178,6 +194,7 @@ class SIJAB_Tillbehor {
 				<a href="#" class="nav-tab sijab-nav-tab" data-tab="visning"><?php esc_html_e( 'Visning', 'sijab-tillbehor' ); ?></a>
 				<a href="#" class="nav-tab sijab-nav-tab" data-tab="api"><?php esc_html_e( 'API-inställningar', 'sijab-tillbehor' ); ?></a>
 				<a href="#" class="nav-tab sijab-nav-tab" data-tab="verktyg"><?php esc_html_e( 'Verktyg', 'sijab-tillbehor' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-stats' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Statistik', 'sijab-tillbehor' ); ?></a>
 			</h2>
 
 			<form method="post" action="options.php">
@@ -572,7 +589,7 @@ class SIJAB_Tillbehor {
 			default:            $stock_label = __( 'Slut i lager', 'sijab-tillbehor' );
 		}
 		?>
-		<div class="sijab-acc-card">
+		<div class="sijab-acc-card" data-accessory-id="<?php echo absint( $id ); ?>">
 			<a href="<?php echo esc_url( $link ); ?>" class="sijab-acc-card__image">
 				<img src="<?php echo esc_url( $image_url ); ?>" alt="<?php echo esc_attr( $title ); ?>" loading="lazy" />
 			</a>
@@ -703,6 +720,11 @@ class SIJAB_Tillbehor {
 			self::VERSION,
 			true
 		);
+
+		wp_localize_script( 'sijab-tillbehor-frontend', 'sijabAccStats', [
+			'ajax_url'  => admin_url( 'admin-ajax.php' ),
+			'parent_id' => $product->get_id(),
+		] );
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -1392,12 +1414,334 @@ class SIJAB_Tillbehor {
 		<?php
 	}
 
+	// ──────────────────────────────────────────────────────────────
+	// Statistics
+	// ──────────────────────────────────────────────────────────────
+
+	/**
+	 * Create the stats database table.
+	 */
+	public static function create_stats_table(): void {
+		global $wpdb;
+		$table   = $wpdb->prefix . self::STATS_TABLE;
+		$charset = $wpdb->get_charset_collate();
+
+		$sql = "CREATE TABLE {$table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			parent_product_id bigint(20) unsigned NOT NULL,
+			accessory_product_id bigint(20) unsigned NOT NULL,
+			event_type varchar(30) NOT NULL,
+			created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (id),
+			KEY parent_product_id (parent_product_id),
+			KEY accessory_product_id (accessory_product_id),
+			KEY event_type (event_type),
+			KEY created_at (created_at)
+		) {$charset};";
+
+		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		dbDelta( $sql );
+
+		update_option( 'sijab_acc_stats_db_version', '1.0' );
+	}
+
+	/**
+	 * AJAX handler for tracking accessory events.
+	 */
+	public function ajax_track_event(): void {
+		$valid_types = [ 'add_to_cart', 'view_product', 'product_click' ];
+
+		$parent_id    = absint( $_POST['parent_id'] ?? 0 );
+		$accessory_id = absint( $_POST['accessory_id'] ?? 0 );
+		$event_type   = sanitize_text_field( $_POST['event_type'] ?? '' );
+
+		if ( ! $parent_id || ! $accessory_id || ! in_array( $event_type, $valid_types, true ) ) {
+			wp_send_json_error( 'Invalid data', 400 );
+		}
+
+		global $wpdb;
+		$wpdb->insert(
+			$wpdb->prefix . self::STATS_TABLE,
+			[
+				'parent_product_id'    => $parent_id,
+				'accessory_product_id' => $accessory_id,
+				'event_type'           => $event_type,
+				'created_at'           => current_time( 'mysql' ),
+			],
+			[ '%d', '%d', '%s', '%s' ]
+		);
+
+		wp_send_json_success();
+	}
+
+	/**
+	 * Cron: delete stats older than 1 year.
+	 */
+	public function cleanup_old_stats(): void {
+		global $wpdb;
+		$wpdb->query( $wpdb->prepare(
+			"DELETE FROM {$wpdb->prefix}" . self::STATS_TABLE . " WHERE created_at < %s",
+			gmdate( 'Y-m-d H:i:s', strtotime( '-1 year' ) )
+		) );
+	}
+
+	/**
+	 * Schedule daily cleanup cron.
+	 */
+	public static function schedule_cleanup(): void {
+		if ( ! wp_next_scheduled( 'sijab_acc_stats_cleanup' ) ) {
+			wp_schedule_event( time(), 'daily', 'sijab_acc_stats_cleanup' );
+		}
+	}
+
+	/**
+	 * Unschedule cleanup cron on deactivation.
+	 */
+	public static function unschedule_cleanup(): void {
+		$ts = wp_next_scheduled( 'sijab_acc_stats_cleanup' );
+		if ( $ts ) wp_unschedule_event( $ts, 'sijab_acc_stats_cleanup' );
+	}
+
+	/**
+	 * Render the statistics admin page.
+	 */
+	public function render_stats_page(): void {
+		global $wpdb;
+		$table = $wpdb->prefix . self::STATS_TABLE;
+
+		// Period filter.
+		$period = sanitize_text_field( $_GET['period'] ?? '30d' );
+		$periods = [
+			'7d'  => '7 dagar',
+			'30d' => '30 dagar',
+			'90d' => '90 dagar',
+			'1yr' => '1 år',
+		];
+		if ( ! isset( $periods[ $period ] ) ) $period = '30d';
+
+		switch ( $period ) {
+			case '7d':  $days = 7; break;
+			case '90d': $days = 90; break;
+			case '1yr': $days = 365; break;
+			default:    $days = 30;
+		}
+		$since = gmdate( 'Y-m-d H:i:s', strtotime( "-{$days} days" ) );
+
+		// Summary counts.
+		$total_clicks   = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE created_at >= %s", $since ) );
+		$add_to_cart    = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type = 'add_to_cart' AND created_at >= %s", $since ) );
+		$view_product   = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type = 'view_product' AND created_at >= %s", $since ) );
+		$product_click  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type = 'product_click' AND created_at >= %s", $since ) );
+
+		// Top accessories.
+		$top_accessories = $wpdb->get_results( $wpdb->prepare(
+			"SELECT accessory_product_id,
+				SUM( event_type = 'add_to_cart' ) AS atc,
+				SUM( event_type = 'view_product' ) AS vp,
+				SUM( event_type = 'product_click' ) AS pc,
+				COUNT(*) AS total
+			FROM {$table}
+			WHERE created_at >= %s
+			GROUP BY accessory_product_id
+			ORDER BY total DESC
+			LIMIT 20",
+			$since
+		) );
+
+		// Top parent products.
+		$top_parents = $wpdb->get_results( $wpdb->prepare(
+			"SELECT parent_product_id,
+				SUM( event_type = 'add_to_cart' ) AS atc,
+				COUNT(*) AS total
+			FROM {$table}
+			WHERE created_at >= %s
+			GROUP BY parent_product_id
+			ORDER BY total DESC
+			LIMIT 20",
+			$since
+		) );
+
+		// Daily trend (for bar chart).
+		$daily = $wpdb->get_results( $wpdb->prepare(
+			"SELECT DATE(created_at) AS day,
+				SUM( event_type = 'add_to_cart' ) AS atc,
+				SUM( event_type = 'view_product' ) AS vp,
+				SUM( event_type = 'product_click' ) AS pc
+			FROM {$table}
+			WHERE created_at >= %s
+			GROUP BY DATE(created_at)
+			ORDER BY day ASC",
+			$since
+		) );
+
+		$max_daily = 1;
+		foreach ( $daily as $d ) {
+			$day_total = (int) $d->atc + (int) $d->vp + (int) $d->pc;
+			if ( $day_total > $max_daily ) $max_daily = $day_total;
+		}
+		?>
+		<div class="wrap">
+			<h1><?php esc_html_e( 'Accessory Tab — Statistik', 'sijab-tillbehor' ); ?></h1>
+
+			<h2 class="nav-tab-wrapper">
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Inställningar', 'sijab-tillbehor' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-stats' ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Statistik', 'sijab-tillbehor' ); ?></a>
+			</h2>
+
+			<!-- Period filter -->
+			<div style="margin: 16px 0;">
+				<?php foreach ( $periods as $key => $label ) :
+					$url   = add_query_arg( 'period', $key, admin_url( 'admin.php?page=sijab-tillbehor-stats' ) );
+					$class = ( $key === $period ) ? 'button button-primary' : 'button';
+				?>
+					<a href="<?php echo esc_url( $url ); ?>" class="<?php echo esc_attr( $class ); ?>"><?php echo esc_html( $label ); ?></a>
+				<?php endforeach; ?>
+			</div>
+
+			<!-- Summary boxes -->
+			<div style="display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px;">
+				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 24px; min-width:150px;">
+					<div style="font-size:28px; font-weight:700; color:#1e73be;"><?php echo number_format_i18n( $total_clicks ); ?></div>
+					<div style="color:#50575e;">Totala klick</div>
+				</div>
+				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 24px; min-width:150px;">
+					<div style="font-size:28px; font-weight:700; color:#00a32a;"><?php echo number_format_i18n( $add_to_cart ); ?></div>
+					<div style="color:#50575e;">Lägg i varukorg</div>
+				</div>
+				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 24px; min-width:150px;">
+					<div style="font-size:28px; font-weight:700; color:#9b59b6;"><?php echo number_format_i18n( $view_product ); ?></div>
+					<div style="color:#50575e;">Visa produkt</div>
+				</div>
+				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 24px; min-width:150px;">
+					<div style="font-size:28px; font-weight:700; color:#e67e22;"><?php echo number_format_i18n( $product_click ); ?></div>
+					<div style="color:#50575e;">Produktklick</div>
+				</div>
+			</div>
+
+			<!-- Daily trend bar chart -->
+			<?php if ( $daily ) : ?>
+			<h3>Daglig trend</h3>
+			<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px; margin-bottom:24px; overflow-x:auto;">
+				<div style="display:flex; align-items:flex-end; gap:2px; height:180px; min-width:<?php echo count( $daily ) * 18; ?>px;">
+					<?php foreach ( $daily as $d ) :
+						$atc = (int) $d->atc;
+						$vp  = (int) $d->vp;
+						$pc  = (int) $d->pc;
+						$h_atc = round( $atc / $max_daily * 160 );
+						$h_vp  = round( $vp / $max_daily * 160 );
+						$h_pc  = round( $pc / $max_daily * 160 );
+					?>
+						<div style="flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; min-width:14px;"
+						     title="<?php echo esc_attr( $d->day . ': ' . ( $atc + $vp + $pc ) . ' klick' ); ?>">
+							<?php if ( $pc ) : ?><div style="width:100%; max-width:16px; height:<?php echo $h_pc; ?>px; background:#e67e22; border-radius:2px 2px 0 0;"></div><?php endif; ?>
+							<?php if ( $vp ) : ?><div style="width:100%; max-width:16px; height:<?php echo $h_vp; ?>px; background:#9b59b6;"></div><?php endif; ?>
+							<?php if ( $atc ) : ?><div style="width:100%; max-width:16px; height:<?php echo $h_atc; ?>px; background:#00a32a; border-radius:0 0 2px 2px;"></div><?php endif; ?>
+						</div>
+					<?php endforeach; ?>
+				</div>
+				<div style="display:flex; justify-content:space-between; margin-top:6px; font-size:11px; color:#999;">
+					<span><?php echo esc_html( $daily[0]->day ?? '' ); ?></span>
+					<span><?php echo esc_html( end( $daily )->day ?? '' ); ?></span>
+				</div>
+				<div style="margin-top:8px; font-size:12px;">
+					<span style="display:inline-block; width:12px; height:12px; background:#00a32a; border-radius:2px; vertical-align:middle;"></span> Lägg i varukorg
+					<span style="display:inline-block; width:12px; height:12px; background:#9b59b6; border-radius:2px; vertical-align:middle; margin-left:12px;"></span> Visa produkt
+					<span style="display:inline-block; width:12px; height:12px; background:#e67e22; border-radius:2px; vertical-align:middle; margin-left:12px;"></span> Produktklick
+				</div>
+			</div>
+			<?php endif; ?>
+
+			<!-- Top accessories table -->
+			<h3>Populäraste tillbehör</h3>
+			<table class="widefat striped" style="margin-bottom:24px;">
+				<thead>
+					<tr>
+						<th>Produkt</th>
+						<th>Lägg i varukorg</th>
+						<th>Visa produkt</th>
+						<th>Produktklick</th>
+						<th>Totalt</th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php if ( $top_accessories ) : ?>
+						<?php foreach ( $top_accessories as $row ) :
+							$p = wc_get_product( $row->accessory_product_id );
+							$name = $p ? $p->get_name() : '#' . $row->accessory_product_id;
+							$edit_url = $p ? get_edit_post_link( $row->accessory_product_id ) : '';
+						?>
+						<tr>
+							<td><?php echo $edit_url ? '<a href="' . esc_url( $edit_url ) . '">' . esc_html( $name ) . '</a>' : esc_html( $name ); ?></td>
+							<td><?php echo number_format_i18n( (int) $row->atc ); ?></td>
+							<td><?php echo number_format_i18n( (int) $row->vp ); ?></td>
+							<td><?php echo number_format_i18n( (int) $row->pc ); ?></td>
+							<td><strong><?php echo number_format_i18n( (int) $row->total ); ?></strong></td>
+						</tr>
+						<?php endforeach; ?>
+					<?php else : ?>
+						<tr><td colspan="5" style="text-align:center; padding:20px; color:#999;">Ingen data ännu för vald period.</td></tr>
+					<?php endif; ?>
+				</tbody>
+			</table>
+
+			<!-- Top parent products table -->
+			<h3>Produkter med mest tillbehörsaktivitet</h3>
+			<table class="widefat striped">
+				<thead>
+					<tr>
+						<th>Produkt</th>
+						<th>Lägg i varukorg</th>
+						<th>Totala klick</th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php if ( $top_parents ) : ?>
+						<?php foreach ( $top_parents as $row ) :
+							$p = wc_get_product( $row->parent_product_id );
+							$name = $p ? $p->get_name() : '#' . $row->parent_product_id;
+							$edit_url = $p ? get_edit_post_link( $row->parent_product_id ) : '';
+						?>
+						<tr>
+							<td><?php echo $edit_url ? '<a href="' . esc_url( $edit_url ) . '">' . esc_html( $name ) . '</a>' : esc_html( $name ); ?></td>
+							<td><?php echo number_format_i18n( (int) $row->atc ); ?></td>
+							<td><strong><?php echo number_format_i18n( (int) $row->total ); ?></strong></td>
+						</tr>
+						<?php endforeach; ?>
+					<?php else : ?>
+						<tr><td colspan="3" style="text-align:center; padding:20px; color:#999;">Ingen data ännu för vald period.</td></tr>
+					<?php endif; ?>
+				</tbody>
+			</table>
+		</div>
+		<?php
+	}
+
 	private function get_bundle_items( int $product_id ): array {
 		$items = get_post_meta( $product_id, self::BUNDLE_META, true );
 		return is_array( $items ) ? $items : [];
 	}
 }
 
+// Activation: create stats table + schedule cron.
+register_activation_hook( __FILE__, function() {
+	SIJAB_Tillbehor::create_stats_table();
+	SIJAB_Tillbehor::schedule_cleanup();
+} );
+
+// Deactivation: unschedule cron.
+register_deactivation_hook( __FILE__, function() {
+	SIJAB_Tillbehor::unschedule_cleanup();
+} );
+
 add_action( 'plugins_loaded', function() {
-	if ( class_exists( 'WooCommerce' ) ) new SIJAB_Tillbehor();
+	if ( ! class_exists( 'WooCommerce' ) ) return;
+
+	new SIJAB_Tillbehor();
+
+	// Create/upgrade stats table without reactivation.
+	$db_ver = get_option( 'sijab_acc_stats_db_version', '0' );
+	if ( version_compare( $db_ver, '1.0', '<' ) ) {
+		SIJAB_Tillbehor::create_stats_table();
+		SIJAB_Tillbehor::schedule_cleanup();
+	}
 } );
