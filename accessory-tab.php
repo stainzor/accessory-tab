@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.22.2
+ * Version: 2.22.3
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.22.2';
+	const VERSION       = '2.22.3';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -967,16 +967,6 @@ class SIJAB_Tillbehor {
 				color: #fff !important;
 				border-color: #d63638 !important;
 			}
-			.sijab-bundle-row__qty {
-				display: flex !important;
-				align-items: center !important;
-				gap: 16px !important;
-				flex-wrap: wrap !important;
-				padding: 8px 10px !important;
-				background: #fff !important;
-				border: 1px solid #e8e8e8 !important;
-				border-radius: 4px !important;
-			}
 			.sijab-bundle-qty-field {
 				display: inline-flex !important;
 				align-items: center !important;
@@ -1008,10 +998,6 @@ class SIJAB_Tillbehor {
 				border-color: #2271b1 !important;
 				box-shadow: 0 0 0 1px #2271b1 !important;
 				outline: none !important;
-			}
-			.sijab-bundle-qty-hint {
-				font-size: 11px !important;
-				color: #999 !important;
 			}
 
 			#sijab_accessories_data .form-field label { width: 220px; }
@@ -1282,22 +1268,12 @@ class SIJAB_Tillbehor {
 								<select class="wc-product-search" name="sijab_bundle_items[<?php echo $i; ?>][product_id]" style="width:100% !important;" data-placeholder="<?php esc_attr_e( 'Sök produkt…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="false">
 									<option value="<?php echo absint( $item['product_id'] ); ?>" selected="selected"><?php echo esc_html( wp_strip_all_tags( $p->get_formatted_name() ) ); ?></option>
 								</select>
-								<button type="button" class="button sijab-bundle-remove"><?php esc_html_e( 'Ta bort', 'sijab-tillbehor' ); ?></button>
-							</div>
-							<div class="sijab-bundle-row__qty">
 								<span class="sijab-bundle-qty-field">
 									<strong>Antal:</strong>
 									<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_default]" value="<?php echo absint( $item['qty_default'] ?? 1 ); ?>" min="1" class="sijab-bundle-qty-input" />
+									<strong>st</strong>
 								</span>
-								<span class="sijab-bundle-qty-field">
-									Min:
-									<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_min]" value="<?php echo absint( $item['qty_min'] ?? 1 ); ?>" min="1" class="sijab-bundle-qty-input" />
-								</span>
-								<span class="sijab-bundle-qty-field">
-									Max:
-									<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_max]" value="<?php echo absint( $item['qty_max'] ?? 0 ); ?>" min="0" class="sijab-bundle-qty-input" placeholder="∞" />
-								</span>
-								<span class="sijab-bundle-qty-hint">(0 = obegränsat)</span>
+								<button type="button" class="button sijab-bundle-remove"><?php esc_html_e( 'Ta bort', 'sijab-tillbehor' ); ?></button>
 							</div>
 						</div>
 					<?php endforeach; ?>
@@ -1410,13 +1386,8 @@ class SIJAB_Tillbehor {
 				var html = '<div class="sijab-bundle-row">'
 					+ '<div class="sijab-bundle-row__product">'
 					+ '<select class="wc-product-search" name="sijab_bundle_items[' + rowIndex + '][product_id]" style="width:100% !important;" data-placeholder="<?php esc_attr_e( 'Sök produkt…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="false"></select>'
+					+ '<span class="sijab-bundle-qty-field"><strong>Antal:</strong> <input type="number" name="sijab_bundle_items[' + rowIndex + '][qty_default]" value="1" min="1" class="sijab-bundle-qty-input" /> <strong>st</strong></span>'
 					+ '<button type="button" class="button sijab-bundle-remove"><?php esc_html_e( 'Ta bort', 'sijab-tillbehor' ); ?></button>'
-					+ '</div>'
-					+ '<div class="sijab-bundle-row__qty">'
-					+ '<span class="sijab-bundle-qty-field"><strong>Antal:</strong> <input type="number" name="sijab_bundle_items[' + rowIndex + '][qty_default]" value="1" min="1" class="sijab-bundle-qty-input" /></span>'
-					+ '<span class="sijab-bundle-qty-field">Min: <input type="number" name="sijab_bundle_items[' + rowIndex + '][qty_min]" value="1" min="1" class="sijab-bundle-qty-input" /></span>'
-					+ '<span class="sijab-bundle-qty-field">Max: <input type="number" name="sijab_bundle_items[' + rowIndex + '][qty_max]" value="0" min="0" class="sijab-bundle-qty-input" placeholder="∞" /></span>'
-					+ '<span class="sijab-bundle-qty-hint">(0 = obegränsat)</span>'
 					+ '</div>'
 					+ '</div>';
 				$('#sijab_bundle_rows').append(html);
@@ -1447,8 +1418,6 @@ class SIJAB_Tillbehor {
 				$items[] = [
 					'product_id'  => $pid,
 					'qty_default' => max( 1, absint( $row['qty_default'] ?? 1 ) ),
-					'qty_min'     => max( 1, absint( $row['qty_min'] ?? 1 ) ),
-					'qty_max'     => absint( $row['qty_max'] ?? 0 ),
 				];
 			}
 		}
@@ -1811,12 +1780,9 @@ class SIJAB_Tillbehor {
 				<?php foreach ( $items as $item ) :
 					$p = wc_get_product( $item['product_id'] );
 					if ( ! $p ) continue;
-					$img      = $p->get_image_id() ? wp_get_attachment_image_url( $p->get_image_id(), 'woocommerce_thumbnail' ) : wc_placeholder_img_src( 'woocommerce_thumbnail' );
-					$link     = get_permalink( $p->get_id() );
-					$qty_def  = absint( $item['qty_default'] ?? 1 );
-					$qty_min  = absint( $item['qty_min'] ?? 1 );
-					$qty_max  = absint( $item['qty_max'] ?? 0 );
-					$has_selector = ( $qty_max > 0 && $qty_min !== $qty_max );
+					$img     = $p->get_image_id() ? wp_get_attachment_image_url( $p->get_image_id(), 'woocommerce_thumbnail' ) : wc_placeholder_img_src( 'woocommerce_thumbnail' );
+					$link    = get_permalink( $p->get_id() );
+					$qty     = absint( $item['qty_default'] ?? 1 );
 					?>
 					<div class="sijab-acc-item">
 						<div class="sijab-acc-card">
@@ -1833,22 +1799,7 @@ class SIJAB_Tillbehor {
 									</div>
 								<?php endif; ?>
 								<div class="sijab-acc-card__right sijab-bundle-qty-badge">
-									<?php if ( $has_selector ) : ?>
-										<div class="sijab-acc-card__qty">
-											<button type="button" class="sijab-qty-btn sijab-qty-minus" aria-label="<?php esc_attr_e( 'Minska antal', 'sijab-tillbehor' ); ?>">−</button>
-											<input type="number" class="sijab-qty-input sijab-bundle-qty-input"
-											       value="<?php echo $qty_def; ?>"
-											       min="<?php echo $qty_min; ?>"
-											       max="<?php echo $qty_max; ?>"
-											       step="1"
-											       data-product-id="<?php echo absint( $p->get_id() ); ?>"
-											       aria-label="<?php esc_attr_e( 'Antal', 'sijab-tillbehor' ); ?>" />
-											<button type="button" class="sijab-qty-btn sijab-qty-plus" aria-label="<?php esc_attr_e( 'Öka antal', 'sijab-tillbehor' ); ?>">+</button>
-										</div>
-										<span class="sijab-bundle-qty-label"><?php esc_html_e( 'st', 'sijab-tillbehor' ); ?></span>
-									<?php else : ?>
-										<span class="sijab-bundle-qty"><?php echo $qty_def; ?> <?php esc_html_e( 'st', 'sijab-tillbehor' ); ?></span>
-									<?php endif; ?>
+									<span class="sijab-bundle-qty"><?php echo $qty; ?> <?php esc_html_e( 'st', 'sijab-tillbehor' ); ?></span>
 								</div>
 							</div>
 						</div>

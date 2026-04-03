@@ -671,16 +671,6 @@
 	white-space: nowrap;
 }
 
-.sijab-bundle-qty-badge .sijab-acc-card__qty {
-	display: inline-flex !important;
-}
-
-.sijab-bundle-qty-label {
-	font-size: 13px;
-	font-weight: 500;
-	color: #555;
-	margin-left: 4px;
-}
 
 /* Bundle section: product name truncation */
 .sijab-bundle-section .sijab-acc-card__name {
