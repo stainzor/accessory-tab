@@ -195,6 +195,7 @@ class SIJAB_Tillbehor {
 				<a href="#" class="nav-tab sijab-nav-tab" data-tab="api"><?php esc_html_e( 'API-inställningar', 'sijab-tillbehor' ); ?></a>
 				<a href="#" class="nav-tab sijab-nav-tab" data-tab="verktyg"><?php esc_html_e( 'Verktyg', 'sijab-tillbehor' ); ?></a>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-stats' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Statistik', 'sijab-tillbehor' ); ?></a>
+				<a href="#" class="nav-tab sijab-nav-tab" data-tab="om"><?php esc_html_e( 'Om', 'sijab-tillbehor' ); ?></a>
 			</h2>
 
 			<form method="post" action="options.php">
@@ -339,12 +340,33 @@ class SIJAB_Tillbehor {
 
 			<!-- ── Flik: Verktyg (egen form för migrering) ── -->
 			<div id="sijab-tab-verktyg" class="sijab-tab-panel" style="display:none;">
-				<p style="margin-top:16px;" class="description">
-					<?php printf( esc_html__( 'Pluginversion: %s', 'sijab-tillbehor' ), '<strong>' . self::VERSION . '</strong>' ); ?>
-					&nbsp;|&nbsp; <a href="https://github.com/stainzor/accessory-tab/releases" target="_blank"><?php esc_html_e( 'Versionshistorik', 'sijab-tillbehor' ); ?></a>
-				</p>
 				<?php $this->render_migration_section(); ?>
 			</div><!-- end Verktyg panel -->
+
+			<!-- ── Flik: Om ─────────────────────────── -->
+			<div id="sijab-tab-om" class="sijab-tab-panel" style="display:none;">
+				<div style="margin-top:16px; background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:24px; max-width:600px;">
+					<h3 style="margin-top:0;">Accessory Tab for WooCommerce</h3>
+					<table class="form-table" style="margin:0;">
+						<tr>
+							<th style="padding:8px 10px 8px 0; width:140px;">Version</th>
+							<td style="padding:8px 0;"><strong><?php echo esc_html( self::VERSION ); ?></strong></td>
+						</tr>
+						<tr>
+							<th style="padding:8px 10px 8px 0;">Utvecklare</th>
+							<td style="padding:8px 0;">SIJAB</td>
+						</tr>
+						<tr>
+							<th style="padding:8px 10px 8px 0;">Licens</th>
+							<td style="padding:8px 0;">GPLv2 or later</td>
+						</tr>
+						<tr>
+							<th style="padding:8px 10px 8px 0;">Versionshistorik</th>
+							<td style="padding:8px 0;"><a href="https://github.com/stainzor/accessory-tab/releases" target="_blank">Se alla releaser på GitHub &rarr;</a></td>
+						</tr>
+					</table>
+				</div>
+			</div><!-- end Om panel -->
 
 		</div><!-- end .wrap -->
 
@@ -1533,33 +1555,31 @@ class SIJAB_Tillbehor {
 		$view_product   = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type = 'view_product' AND created_at >= %s", $since ) );
 		$product_click  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type = 'product_click' AND created_at >= %s", $since ) );
 
-		// Top accessories.
-		$top_accessories = $wpdb->get_results( $wpdb->prepare(
-			"SELECT accessory_product_id,
+		// Accessories chosen per parent product.
+		$per_parent = $wpdb->get_results( $wpdb->prepare(
+			"SELECT parent_product_id, accessory_product_id,
 				SUM( event_type = 'add_to_cart' ) AS atc,
 				SUM( event_type = 'view_product' ) AS vp,
 				SUM( event_type = 'product_click' ) AS pc,
 				COUNT(*) AS total
 			FROM {$table}
 			WHERE created_at >= %s
-			GROUP BY accessory_product_id
-			ORDER BY total DESC
-			LIMIT 20",
+			GROUP BY parent_product_id, accessory_product_id
+			ORDER BY parent_product_id, total DESC",
 			$since
 		) );
 
-		// Top parent products.
-		$top_parents = $wpdb->get_results( $wpdb->prepare(
-			"SELECT parent_product_id,
-				SUM( event_type = 'add_to_cart' ) AS atc,
-				COUNT(*) AS total
-			FROM {$table}
-			WHERE created_at >= %s
-			GROUP BY parent_product_id
-			ORDER BY total DESC
-			LIMIT 20",
-			$since
-		) );
+		// Group rows by parent product.
+		$grouped = [];
+		foreach ( $per_parent as $row ) {
+			$pid = (int) $row->parent_product_id;
+			if ( ! isset( $grouped[ $pid ] ) ) $grouped[ $pid ] = [ 'rows' => [], 'total' => 0, 'atc' => 0 ];
+			$grouped[ $pid ]['rows'][] = $row;
+			$grouped[ $pid ]['total'] += (int) $row->total;
+			$grouped[ $pid ]['atc']   += (int) $row->atc;
+		}
+		// Sort parents by total clicks desc.
+		uasort( $grouped, function( $a, $b ) { return $b['total'] - $a['total']; } );
 
 		// Daily trend (for bar chart).
 		$daily = $wpdb->get_results( $wpdb->prepare(
@@ -1588,6 +1608,7 @@ class SIJAB_Tillbehor {
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings#sijab-tab-api' ) ); ?>" class="nav-tab"><?php esc_html_e( 'API-inställningar', 'sijab-tillbehor' ); ?></a>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings#sijab-tab-verktyg' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Verktyg', 'sijab-tillbehor' ); ?></a>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-stats' ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Statistik', 'sijab-tillbehor' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings#sijab-tab-om' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Om', 'sijab-tillbehor' ); ?></a>
 			</h2>
 
 			<!-- Period filter -->
@@ -1653,67 +1674,56 @@ class SIJAB_Tillbehor {
 			</div>
 			<?php endif; ?>
 
-			<!-- Top accessories table -->
-			<h3>Populäraste tillbehör</h3>
-			<table class="widefat striped" style="margin-bottom:24px;">
-				<thead>
-					<tr>
-						<th>Produkt</th>
-						<th>Lägg i varukorg</th>
-						<th>Visa produkt</th>
-						<th>Produktklick</th>
-						<th>Totalt</th>
-					</tr>
-				</thead>
-				<tbody>
-					<?php if ( $top_accessories ) : ?>
-						<?php foreach ( $top_accessories as $row ) :
-							$p = wc_get_product( $row->accessory_product_id );
-							$name = $p ? $p->get_name() : '#' . $row->accessory_product_id;
-							$edit_url = $p ? get_edit_post_link( $row->accessory_product_id ) : '';
-						?>
-						<tr>
-							<td><?php echo $edit_url ? '<a href="' . esc_url( $edit_url ) . '">' . esc_html( $name ) . '</a>' : esc_html( $name ); ?></td>
-							<td><?php echo number_format_i18n( (int) $row->atc ); ?></td>
-							<td><?php echo number_format_i18n( (int) $row->vp ); ?></td>
-							<td><?php echo number_format_i18n( (int) $row->pc ); ?></td>
-							<td><strong><?php echo number_format_i18n( (int) $row->total ); ?></strong></td>
-						</tr>
-						<?php endforeach; ?>
-					<?php else : ?>
-						<tr><td colspan="5" style="text-align:center; padding:20px; color:#999;">Ingen data ännu för vald period.</td></tr>
-					<?php endif; ?>
-				</tbody>
-			</table>
-
-			<!-- Top parent products table -->
-			<h3>Produkter med mest tillbehörsaktivitet</h3>
-			<table class="widefat striped">
-				<thead>
-					<tr>
-						<th>Produkt</th>
-						<th>Lägg i varukorg</th>
-						<th>Totala klick</th>
-					</tr>
-				</thead>
-				<tbody>
-					<?php if ( $top_parents ) : ?>
-						<?php foreach ( $top_parents as $row ) :
-							$p = wc_get_product( $row->parent_product_id );
-							$name = $p ? $p->get_name() : '#' . $row->parent_product_id;
-							$edit_url = $p ? get_edit_post_link( $row->parent_product_id ) : '';
-						?>
-						<tr>
-							<td><?php echo $edit_url ? '<a href="' . esc_url( $edit_url ) . '">' . esc_html( $name ) . '</a>' : esc_html( $name ); ?></td>
-							<td><?php echo number_format_i18n( (int) $row->atc ); ?></td>
-							<td><strong><?php echo number_format_i18n( (int) $row->total ); ?></strong></td>
-						</tr>
-						<?php endforeach; ?>
-					<?php else : ?>
-						<tr><td colspan="3" style="text-align:center; padding:20px; color:#999;">Ingen data ännu för vald period.</td></tr>
-					<?php endif; ?>
-				</tbody>
-			</table>
+			<!-- Accessories chosen per parent product -->
+			<h3>Tillbehör som valts till via artikel</h3>
+			<?php if ( $grouped ) : ?>
+				<?php foreach ( $grouped as $pid => $group ) :
+					$parent = wc_get_product( $pid );
+					$parent_name = $parent ? $parent->get_name() : '#' . $pid;
+					$parent_url  = $parent ? get_edit_post_link( $pid ) : '';
+				?>
+				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px; margin-bottom:16px;">
+					<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+						<h4 style="margin:0; font-size:14px;">
+							<?php echo $parent_url ? '<a href="' . esc_url( $parent_url ) . '">' . esc_html( $parent_name ) . '</a>' : esc_html( $parent_name ); ?>
+						</h4>
+						<span style="color:#50575e; font-size:13px;">
+							<?php echo number_format_i18n( $group['atc'] ); ?> tillagda i varukorg &middot; <?php echo number_format_i18n( $group['total'] ); ?> totala klick
+						</span>
+					</div>
+					<table class="widefat striped" style="margin:0;">
+						<thead>
+							<tr>
+								<th>Tillbehör</th>
+								<th>Lägg i varukorg</th>
+								<th>Visa produkt</th>
+								<th>Produktklick</th>
+								<th>Totalt</th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php foreach ( $group['rows'] as $row ) :
+								$acc = wc_get_product( $row->accessory_product_id );
+								$acc_name = $acc ? $acc->get_name() : '#' . $row->accessory_product_id;
+								$acc_url  = $acc ? get_edit_post_link( $row->accessory_product_id ) : '';
+							?>
+							<tr>
+								<td><?php echo $acc_url ? '<a href="' . esc_url( $acc_url ) . '">' . esc_html( $acc_name ) . '</a>' : esc_html( $acc_name ); ?></td>
+								<td><?php echo number_format_i18n( (int) $row->atc ); ?></td>
+								<td><?php echo number_format_i18n( (int) $row->vp ); ?></td>
+								<td><?php echo number_format_i18n( (int) $row->pc ); ?></td>
+								<td><strong><?php echo number_format_i18n( (int) $row->total ); ?></strong></td>
+							</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+				<?php endforeach; ?>
+			<?php else : ?>
+				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:24px; text-align:center; color:#999;">
+					Ingen data ännu för vald period.
+				</div>
+			<?php endif; ?>
 		</div>
 		<?php
 	}
