@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.23.4
+ * Version: 2.23.6
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.23.4';
+	const VERSION       = '2.23.6';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -84,6 +84,7 @@ class SIJAB_Tillbehor {
 		// Admin: filter by bundle in product list.
 		add_filter( 'woocommerce_product_filters', [ $this, 'add_bundle_type_filter' ] );
 		add_action( 'pre_get_posts', [ $this, 'filter_products_by_bundle' ], 1 );
+		add_filter( 'request', [ $this, 'intercept_bundle_request' ], 1 );
 
 		// Order tracking: tag cart items added via accessory plugin.
 		add_filter( 'woocommerce_add_cart_item_data', [ $this, 'tag_cart_item' ], 10, 2 );
@@ -1141,7 +1142,11 @@ class SIJAB_Tillbehor {
 			}
 			.sijab-acc-remove:hover { color: #fff; background: #d63638; border-color: #d63638; text-decoration: none; }
 		';
-		wp_add_inline_style( 'woocommerce_admin_styles', $css );
+		// Output CSS via admin_head since wp_add_inline_style doesn't work
+		// when WooCommerce has already printed the stylesheet.
+		add_action( 'admin_head', function() use ( $css ) {
+			echo '<style id="sijab-admin-bundle-css">' . $css . '</style>';
+		} );
 
 		// Sortable JS
 		wp_enqueue_script( 'jquery-ui-sortable' );
@@ -2003,7 +2008,7 @@ class SIJAB_Tillbehor {
 	 * Add "Paket" option to the product type filter dropdown in admin product list.
 	 */
 	public function add_bundle_type_filter( string $output ): string {
-		$selected = isset( $_GET['product_type'] ) && $_GET['product_type'] === 'sijab_bundle' ? ' selected="selected"' : '';
+		$selected = $this->bundle_filter_active ? ' selected="selected"' : '';
 		$option   = '<option value="sijab_bundle"' . $selected . '>' . esc_html__( 'Paket', 'sijab-tillbehor' ) . '</option>';
 
 		// Find the product type <select> reliably by looking for value="simple"
@@ -2021,20 +2026,37 @@ class SIJAB_Tillbehor {
 	}
 
 	/**
-	 * Filter admin product list when "Paket" is selected.
-	 * Uses pre_get_posts priority 1 to intercept BEFORE WooCommerce (priority 10)
-	 * processes the product_type GET parameter as a taxonomy query.
+	 * Early intercept: remove product_type=sijab_bundle from $_GET
+	 * and set meta_query BEFORE WooCommerce processes it.
+	 *
+	 * Strategy: We use a class property to remember that bundle filter
+	 * is active, then permanently remove product_type from $_GET so WC
+	 * never sees it. The dropdown selected state uses the class property.
 	 */
+	private $bundle_filter_active = false;
+
 	public function filter_products_by_bundle( $query ): void {
 		if ( ! is_admin() || ! $query->is_main_query() ) return;
 		if ( ! isset( $_GET['post_type'] ) || $_GET['post_type'] !== 'product' ) return;
+		if ( $this->bundle_filter_active ) {
+			// Already processed via intercept_bundle_request — just add meta_query.
+			$meta_query = $query->get( 'meta_query' ) ?: [];
+			$meta_query[] = [
+				'key'     => self::BUNDLE_FLAG,
+				'value'   => '1',
+				'compare' => '=',
+			];
+			$query->set( 'meta_query', $meta_query );
+			return;
+		}
 		if ( ! isset( $_GET['product_type'] ) || $_GET['product_type'] !== 'sijab_bundle' ) return;
 
-		// Remove product_type BEFORE WooCommerce sees it — otherwise WC adds
-		// a tax_query for a non-existent product type taxonomy term, returning 0 results.
-		unset( $_GET['product_type'] );
+		$this->bundle_filter_active = true;
 
-		// Add meta_query to filter by bundle flag.
+		// Permanently remove from $_GET so WC never processes it as taxonomy.
+		unset( $_GET['product_type'] );
+		unset( $_REQUEST['product_type'] );
+
 		$meta_query = $query->get( 'meta_query' ) ?: [];
 		$meta_query[] = [
 			'key'     => self::BUNDLE_FLAG,
@@ -2042,9 +2064,26 @@ class SIJAB_Tillbehor {
 			'compare' => '=',
 		];
 		$query->set( 'meta_query', $meta_query );
+	}
 
-		// Restore GET param so the dropdown still shows "Paket" as selected.
-		$_GET['product_type'] = 'sijab_bundle';
+	/**
+	 * Intercept 'request' filter (runs before WC's query_filters) to
+	 * permanently remove product_type=sijab_bundle from $_GET.
+	 */
+	public function intercept_bundle_request( array $query_vars ): array {
+		if ( ! is_admin() ) return $query_vars;
+		if ( ! isset( $_GET['product_type'] ) || $_GET['product_type'] !== 'sijab_bundle' ) return $query_vars;
+		if ( ! isset( $_GET['post_type'] ) || $_GET['post_type'] !== 'product' ) return $query_vars;
+
+		$this->bundle_filter_active = true;
+
+		// Permanently remove so WC's WC_Admin_List_Table_Products::query_filters()
+		// never sees it and never adds a tax_query for non-existent type.
+		unset( $_GET['product_type'] );
+		unset( $_REQUEST['product_type'] );
+		unset( $query_vars['product_type'] );
+
+		return $query_vars;
 	}
 
 	// ──────────────────────────────────────────────────────────────
