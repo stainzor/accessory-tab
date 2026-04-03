@@ -101,23 +101,24 @@ class SIJAB_Tillbehor {
 	 * Register the settings submenu under WooCommerce.
 	 */
 	public function register_settings_menu(): void {
+		// Stats page is the main entry point in the WooCommerce menu.
 		add_submenu_page(
 			'woocommerce',
-			__( 'Tillbehör — Inställningar', 'sijab-tillbehor' ),
-			__( 'Tillbehör', 'sijab-tillbehor' ),
-			'manage_woocommerce',
-			'sijab-tillbehor-settings',
-			[ $this, 'render_settings_page' ]
-		);
-
-		// Hidden submenu for stats page (accessible via tab).
-		add_submenu_page(
-			'',
 			__( 'Tillbehör — Statistik', 'sijab-tillbehor' ),
-			'',
+			__( 'Tillbehör', 'sijab-tillbehor' ),
 			'manage_woocommerce',
 			'sijab-tillbehor-stats',
 			[ $this, 'render_stats_page' ]
+		);
+
+		// Settings page accessible via tab.
+		add_submenu_page(
+			'',
+			__( 'Tillbehör — Inställningar', 'sijab-tillbehor' ),
+			'',
+			'manage_woocommerce',
+			'sijab-tillbehor-settings',
+			[ $this, 'render_settings_page' ]
 		);
 	}
 
