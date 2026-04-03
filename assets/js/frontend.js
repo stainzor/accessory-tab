@@ -139,6 +139,13 @@
 			stockEl.textContent = stockLabel;
 		}
 
+		// SKU
+		var skuVal = selected.getAttribute('data-sku') || '';
+		var skuEl  = card.querySelector('.sijab-acc-card__sku');
+		if (skuEl) {
+			skuEl.textContent = skuVal ? 'Art.nr: ' + skuVal : '';
+		}
+
 		// Enable/disable add-to-cart button
 		var btn        = card.querySelector('.sijab-var-atc-btn');
 		var purchasable = varId && selected.getAttribute('data-purchasable') === '1';

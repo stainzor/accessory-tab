@@ -594,28 +594,23 @@
 }
 
 /* ══════════════════════════════════════════
-   VARIABLE PRODUCT — variant select
+   VARIABLE PRODUCT — variant select (inside details)
    ══════════════════════════════════════════ */
-
-.sijab-acc-card__right--variable {
-	min-width: 260px;
-}
 
 .sijab-acc-card__var-row {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	justify-content: flex-end;
+	margin-top: 4px;
 }
 
 .sijab-var-select {
-	flex: 1;
-	min-width: 0;
-	height: 36px !important;
+	width: 100%;
+	max-width: 200px;
+	height: 30px !important;
 	border: 1px solid #d0d0d0 !important;
-	border-radius: 6px !important;
-	padding: 0 10px !important;
-	font-size: 13px !important;
+	border-radius: 4px !important;
+	padding: 0 8px !important;
+	font-size: 12px !important;
 	color: #333 !important;
 	background: #fff !important;
 	cursor: pointer;
@@ -634,16 +629,8 @@
 }
 
 @media (max-width: 600px) {
-	.sijab-acc-card__right--variable {
-		min-width: unset;
-		width: 100%;
-	}
-	.sijab-acc-card__var-row {
-		flex-wrap: wrap;
-	}
 	.sijab-var-select {
-		width: 100% !important;
-		flex: unset;
+		max-width: 100% !important;
 	}
 }
 
@@ -709,8 +696,8 @@
 		min-width: unset;
 	}
 
-	/* Variable product row on mobile */
-	.sijab-acc-card__right--variable .sijab-acc-card__qty-row {
-		flex-wrap: wrap;
+	/* Variable product: variant select on mobile */
+	.sijab-acc-card__var-row .sijab-var-select {
+		max-width: 100% !important;
 	}
 }
