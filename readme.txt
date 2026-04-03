@@ -1,13 +1,24 @@
 Accessory Tab for WooCommerce
 
+v2.20.0
+- Enhetlig adminsida — alla flikar (Statistik, Visning, API, Verktyg, Om) utan sidladdning
+- Statistik som standardflik
+- Periodfilter bevarar aktiv flik
+
+v2.19.0
+- AI-förslag för tillbehör: knapp "Föreslå tillbehör med AI" i produktredigeraren
+- OpenAI analyserar produkt, kategori, beskrivning och föreslår matchande tillbehör
+- Resultat visas med kryssrutor grupperat per sökord
+
+v2.18.0
+- Kategori-länk: välj tillbehörskategori i admin, visar "Se alla [kategori]"-länk på frontend
+- Ny dropdown i Tillbehör-tabben på produktredigeraren
+
 v2.17.0
-- Ny "Statistik"-flik under Tillbehör-inställningar
-- Spårar tillbehörsklick: Lägg i varukorg, Visa produkt, Produktklick (namn/bild)
-- Daglig trendgraf, topplistor för tillbehör och produkter
-- Periodfilter: 7 dagar, 30 dagar, 90 dagar, 1 år
-- navigator.sendBeacon tracking (non-blocking, påverkar ej sidladdning)
+- Statistik: spårar tillbehörsklick (Lägg i varukorg, Visa produkt, Produktklick)
+- Daglig trendgraf, topplistor, periodfilter (7d/30d/90d/1år)
+- navigator.sendBeacon tracking (non-blocking)
 - Custom DB-tabell med daglig cleanup (1 års datalagring)
-- Automatisk DB-uppgradering utan omaktivering
 
 v2.16.0
 - Variabla produkter: dropdown för att välja variant direkt i tillbehörskortet
@@ -30,24 +41,14 @@ v2.11.0 - v2.11.1
 - Ljusblå sektionsdesign (Dustin-inspirerad)
 - Drag and drop sortering i admin
 - Mobil "Visa fler"-toggle (visar 1 tillbehör, resten dolda)
-- Dämpad prisfont på tillbehörskort
 
 v2.4.0
-- Nytt mappnamn: accessory-tab (ersätter sijab-tillbehor-tab-1.2.0)
-- Nytt pluginnamn: Accessory Tab for WooCommerce
-- GitHub-token-fält i inställningar för automatiska uppdateringar från privat repo
-- Pluginversion visas på inställningssidan
+- Nytt mappnamn: accessory-tab
+- GitHub-token i inställningar för automatiska uppdateringar
 
 v2.3.0
 - GitHub auto-updater via plugin-update-checker
-- Automatiska uppdateringar från GitHub releases
 
 v2.0.0
-- Tillbehör visas nu direkt på produktsidan (ovanför flikarna) istället för i en dold flik
-- Dustin-inspirerad kortlayout med bild, namn, SKU, pris, lagerstatus och "Lägg till"-knapp
-- AJAX add-to-cart (via WooCommerce inbyggda ajax_add_to_cart)
-- Extern CSS-fil istället för inline styles
-- Responsiv design (4 kort desktop, 2 kort mobil)
-- Inställningar: placering, rubrikformat, antal kolumner
-- Kvantitetsväljare (+/- knappar) för enkla produkter
-- Befintliga tillbehörskopplingar behålls (samma meta-nyckel)
+- Dustin-inspirerad kortlayout med bild, namn, SKU, pris, lagerstatus, "Lägg till"-knapp
+- AJAX add-to-cart, responsiv design, kvantitetsväljare
