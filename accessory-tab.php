@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.22.1
+ * Version: 2.22.2
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.22.1';
+	const VERSION       = '2.22.2';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -942,6 +942,78 @@ class SIJAB_Tillbehor {
 		if ( empty( $screen ) || 'product' !== $screen->id ) return;
 
 		$css = '
+			/* Bundle row layout — override WooCommerce panel styles */
+			.sijab-bundle-row {
+				padding: 14px !important;
+				border: 1px solid #e0e0e0 !important;
+				border-radius: 6px !important;
+				margin: 0 12px 10px !important;
+				background: #fafafa !important;
+			}
+			.sijab-bundle-row__product {
+				display: flex !important;
+				align-items: center !important;
+				gap: 8px !important;
+				margin-bottom: 10px !important;
+			}
+			.sijab-bundle-row__product .select2-container { width: 100% !important; }
+			.sijab-bundle-row__product .sijab-bundle-remove {
+				flex-shrink: 0 !important;
+				color: #a00 !important;
+				border-color: #a00 !important;
+			}
+			.sijab-bundle-row__product .sijab-bundle-remove:hover {
+				background: #d63638 !important;
+				color: #fff !important;
+				border-color: #d63638 !important;
+			}
+			.sijab-bundle-row__qty {
+				display: flex !important;
+				align-items: center !important;
+				gap: 16px !important;
+				flex-wrap: wrap !important;
+				padding: 8px 10px !important;
+				background: #fff !important;
+				border: 1px solid #e8e8e8 !important;
+				border-radius: 4px !important;
+			}
+			.sijab-bundle-qty-field {
+				display: inline-flex !important;
+				align-items: center !important;
+				gap: 5px !important;
+				font-size: 13px !important;
+				color: #333 !important;
+				white-space: nowrap !important;
+			}
+			.sijab-bundle-qty-field strong {
+				color: #1d2327 !important;
+			}
+			input.sijab-bundle-qty-input {
+				width: 65px !important;
+				min-width: 65px !important;
+				height: 32px !important;
+				padding: 0 8px !important;
+				border: 1px solid #8c8f94 !important;
+				border-radius: 4px !important;
+				font-size: 14px !important;
+				text-align: center !important;
+				display: inline-block !important;
+				visibility: visible !important;
+				opacity: 1 !important;
+				background: #fff !important;
+				box-shadow: none !important;
+				-moz-appearance: textfield !important;
+			}
+			input.sijab-bundle-qty-input:focus {
+				border-color: #2271b1 !important;
+				box-shadow: 0 0 0 1px #2271b1 !important;
+				outline: none !important;
+			}
+			.sijab-bundle-qty-hint {
+				font-size: 11px !important;
+				color: #999 !important;
+			}
+
 			#sijab_accessories_data .form-field label { width: 220px; }
 			#sijab_acc_sortable { margin: 0; padding: 0; list-style: none; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }
 			#sijab_acc_sortable:empty { border: none; }
@@ -1205,27 +1277,27 @@ class SIJAB_Tillbehor {
 						$p = wc_get_product( $item['product_id'] ?? 0 );
 						if ( ! $p ) continue;
 						?>
-						<div class="sijab-bundle-row" style="padding:12px; border:1px solid #e0e0e0; border-radius:4px; margin:0 12px 8px; background:#fafafa;">
-							<div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-								<select class="wc-product-search" name="sijab_bundle_items[<?php echo $i; ?>][product_id]" style="width:100%;" data-placeholder="<?php esc_attr_e( 'Sök produkt…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="false">
+						<div class="sijab-bundle-row">
+							<div class="sijab-bundle-row__product">
+								<select class="wc-product-search" name="sijab_bundle_items[<?php echo $i; ?>][product_id]" style="width:100% !important;" data-placeholder="<?php esc_attr_e( 'Sök produkt…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="false">
 									<option value="<?php echo absint( $item['product_id'] ); ?>" selected="selected"><?php echo esc_html( wp_strip_all_tags( $p->get_formatted_name() ) ); ?></option>
 								</select>
-								<button type="button" class="button sijab-bundle-remove" style="flex-shrink:0; color:#a00; border-color:#a00;"><?php esc_html_e( 'Ta bort', 'sijab-tillbehor' ); ?></button>
+								<button type="button" class="button sijab-bundle-remove"><?php esc_html_e( 'Ta bort', 'sijab-tillbehor' ); ?></button>
 							</div>
-							<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-								<label style="font-size:12px; white-space:nowrap; display:flex; align-items:center; gap:4px;">
-									<strong><?php esc_html_e( 'Antal:', 'sijab-tillbehor' ); ?></strong>
-									<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_default]" value="<?php echo absint( $item['qty_default'] ?? 1 ); ?>" min="1" style="width:60px;" />
-								</label>
-								<label style="font-size:12px; white-space:nowrap; display:flex; align-items:center; gap:4px; color:#666;">
-									<?php esc_html_e( 'Min:', 'sijab-tillbehor' ); ?>
-									<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_min]" value="<?php echo absint( $item['qty_min'] ?? 1 ); ?>" min="1" style="width:60px;" />
-								</label>
-								<label style="font-size:12px; white-space:nowrap; display:flex; align-items:center; gap:4px; color:#666;">
-									<?php esc_html_e( 'Max:', 'sijab-tillbehor' ); ?>
-									<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_max]" value="<?php echo absint( $item['qty_max'] ?? 0 ); ?>" min="0" style="width:60px;" placeholder="∞" />
-								</label>
-								<span style="font-size:11px; color:#999;"><?php esc_html_e( '(0 = obegränsat)', 'sijab-tillbehor' ); ?></span>
+							<div class="sijab-bundle-row__qty">
+								<span class="sijab-bundle-qty-field">
+									<strong>Antal:</strong>
+									<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_default]" value="<?php echo absint( $item['qty_default'] ?? 1 ); ?>" min="1" class="sijab-bundle-qty-input" />
+								</span>
+								<span class="sijab-bundle-qty-field">
+									Min:
+									<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_min]" value="<?php echo absint( $item['qty_min'] ?? 1 ); ?>" min="1" class="sijab-bundle-qty-input" />
+								</span>
+								<span class="sijab-bundle-qty-field">
+									Max:
+									<input type="number" name="sijab_bundle_items[<?php echo $i; ?>][qty_max]" value="<?php echo absint( $item['qty_max'] ?? 0 ); ?>" min="0" class="sijab-bundle-qty-input" placeholder="∞" />
+								</span>
+								<span class="sijab-bundle-qty-hint">(0 = obegränsat)</span>
 							</div>
 						</div>
 					<?php endforeach; ?>
@@ -1335,16 +1407,16 @@ class SIJAB_Tillbehor {
 			});
 
 			$('#sijab_add_bundle_row').on('click', function() {
-				var html = '<div class=\"sijab-bundle-row\" style=\"padding:12px; border:1px solid #e0e0e0; border-radius:4px; margin:0 12px 8px; background:#fafafa;\">'
-					+ '<div style=\"display:flex; align-items:center; gap:8px; margin-bottom:8px;\">'
-					+ '<select class=\"wc-product-search\" name=\"sijab_bundle_items[' + rowIndex + '][product_id]\" style=\"width:100%;\" data-placeholder=\"<?php esc_attr_e( 'Sök produkt…', 'sijab-tillbehor' ); ?>\" data-action=\"woocommerce_json_search_products_and_variations\" data-allow_clear=\"false\"></select>'
-					+ '<button type=\"button\" class=\"button sijab-bundle-remove\" style=\"flex-shrink:0; color:#a00; border-color:#a00;\"><?php esc_html_e( 'Ta bort', 'sijab-tillbehor' ); ?></button>'
+				var html = '<div class="sijab-bundle-row">'
+					+ '<div class="sijab-bundle-row__product">'
+					+ '<select class="wc-product-search" name="sijab_bundle_items[' + rowIndex + '][product_id]" style="width:100% !important;" data-placeholder="<?php esc_attr_e( 'Sök produkt…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="false"></select>'
+					+ '<button type="button" class="button sijab-bundle-remove"><?php esc_html_e( 'Ta bort', 'sijab-tillbehor' ); ?></button>'
 					+ '</div>'
-					+ '<div style=\"display:flex; align-items:center; gap:12px; flex-wrap:wrap;\">'
-					+ '<label style=\"font-size:12px; white-space:nowrap; display:flex; align-items:center; gap:4px;\"><strong><?php esc_html_e( 'Antal:', 'sijab-tillbehor' ); ?></strong> <input type=\"number\" name=\"sijab_bundle_items[' + rowIndex + '][qty_default]\" value=\"1\" min=\"1\" style=\"width:60px;\" /></label>'
-					+ '<label style=\"font-size:12px; white-space:nowrap; display:flex; align-items:center; gap:4px; color:#666;\"><?php esc_html_e( 'Min:', 'sijab-tillbehor' ); ?> <input type=\"number\" name=\"sijab_bundle_items[' + rowIndex + '][qty_min]\" value=\"1\" min=\"1\" style=\"width:60px;\" /></label>'
-					+ '<label style=\"font-size:12px; white-space:nowrap; display:flex; align-items:center; gap:4px; color:#666;\"><?php esc_html_e( 'Max:', 'sijab-tillbehor' ); ?> <input type=\"number\" name=\"sijab_bundle_items[' + rowIndex + '][qty_max]\" value=\"0\" min=\"0\" style=\"width:60px;\" placeholder=\"∞\" /></label>'
-					+ '<span style=\"font-size:11px; color:#999;\"><?php esc_html_e( '(0 = obegränsat)', 'sijab-tillbehor' ); ?></span>'
+					+ '<div class="sijab-bundle-row__qty">'
+					+ '<span class="sijab-bundle-qty-field"><strong>Antal:</strong> <input type="number" name="sijab_bundle_items[' + rowIndex + '][qty_default]" value="1" min="1" class="sijab-bundle-qty-input" /></span>'
+					+ '<span class="sijab-bundle-qty-field">Min: <input type="number" name="sijab_bundle_items[' + rowIndex + '][qty_min]" value="1" min="1" class="sijab-bundle-qty-input" /></span>'
+					+ '<span class="sijab-bundle-qty-field">Max: <input type="number" name="sijab_bundle_items[' + rowIndex + '][qty_max]" value="0" min="0" class="sijab-bundle-qty-input" placeholder="∞" /></span>'
+					+ '<span class="sijab-bundle-qty-hint">(0 = obegränsat)</span>'
 					+ '</div>'
 					+ '</div>';
 				$('#sijab_bundle_rows').append(html);
