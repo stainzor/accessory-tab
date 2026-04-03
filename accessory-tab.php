@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.19.0
+ * Version: 2.20.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.19.0';
+	const VERSION       = '2.20.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -102,24 +102,13 @@ class SIJAB_Tillbehor {
 	 * Register the settings submenu under WooCommerce.
 	 */
 	public function register_settings_menu(): void {
-		// Stats page is the main entry point in the WooCommerce menu.
 		add_submenu_page(
 			'woocommerce',
-			__( 'Tillbehör — Statistik', 'sijab-tillbehor' ),
+			__( 'Accessory Tab — Tillbehör', 'sijab-tillbehor' ),
 			__( 'Tillbehör', 'sijab-tillbehor' ),
 			'manage_woocommerce',
-			'sijab-tillbehor-stats',
-			[ $this, 'render_stats_page' ]
-		);
-
-		// Settings page accessible via tab.
-		add_submenu_page(
-			'',
-			__( 'Tillbehör — Inställningar', 'sijab-tillbehor' ),
-			'',
-			'manage_woocommerce',
-			'sijab-tillbehor-settings',
-			[ $this, 'render_settings_page' ]
+			'sijab-tillbehor',
+			[ $this, 'render_admin_page' ]
 		);
 	}
 
@@ -182,9 +171,9 @@ class SIJAB_Tillbehor {
 	}
 
 	/**
-	 * Render the settings page.
+	 * Render the unified admin page (all tabs).
 	 */
-	public function render_settings_page(): void {
+	public function render_admin_page(): void {
 		$s        = $this->get_settings();
 		$gh_token = get_option( 'sijab_tillbehor_github_token', '' );
 		$ai_key   = get_option( 'sijab_openai_api_key', '' );
@@ -193,12 +182,15 @@ class SIJAB_Tillbehor {
 			<h1><?php esc_html_e( 'Accessory Tab — Tillbehör', 'sijab-tillbehor' ); ?></h1>
 
 			<h2 class="nav-tab-wrapper">
+				<a href="#" class="nav-tab sijab-nav-tab" data-tab="statistik"><?php esc_html_e( 'Statistik', 'sijab-tillbehor' ); ?></a>
 				<a href="#" class="nav-tab sijab-nav-tab" data-tab="visning"><?php esc_html_e( 'Visning', 'sijab-tillbehor' ); ?></a>
 				<a href="#" class="nav-tab sijab-nav-tab" data-tab="api"><?php esc_html_e( 'API-inställningar', 'sijab-tillbehor' ); ?></a>
 				<a href="#" class="nav-tab sijab-nav-tab" data-tab="verktyg"><?php esc_html_e( 'Verktyg', 'sijab-tillbehor' ); ?></a>
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-stats' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Statistik', 'sijab-tillbehor' ); ?></a>
 				<a href="#" class="nav-tab sijab-nav-tab" data-tab="om"><?php esc_html_e( 'Om', 'sijab-tillbehor' ); ?></a>
 			</h2>
+
+			<!-- ── Flik: Statistik ────────────────────── -->
+			<?php $this->render_stats_panel(); ?>
 
 			<form method="post" action="options.php">
 				<?php settings_fields( 'sijab_tillbehor' ); ?>
@@ -386,15 +378,23 @@ class SIJAB_Tillbehor {
 				try { localStorage.setItem(storageKey, id); } catch(e) {}
 			}
 
-			// Restore last active tab.
+			// Restore last active tab (default: statistik).
 			var saved = '';
 			try { saved = localStorage.getItem(storageKey) || ''; } catch(e) {}
 			var hash = window.location.hash.replace('#sijab-tab-', '');
-			activateTab( hash || saved || 'visning' );
+			activateTab( hash || saved || 'statistik' );
 
 			tabs.on('click', function(e) {
 				e.preventDefault();
 				activateTab($(this).data('tab'));
+			});
+
+			// Period filter for stats — reload page with period param, preserve tab.
+			$(document).on('click', '.sijab-period-btn', function(e) {
+				e.preventDefault();
+				var period = $(this).data('period');
+				var url = window.location.pathname + '?page=sijab-tillbehor&period=' + period + '#sijab-tab-statistik';
+				window.location.href = url;
 			});
 		}(jQuery));
 		</script>
@@ -1784,7 +1784,10 @@ class SIJAB_Tillbehor {
 	/**
 	 * Render the statistics admin page.
 	 */
-	public function render_stats_page(): void {
+	/**
+	 * Render the statistics panel (embedded in admin page).
+	 */
+	private function render_stats_panel(): void {
 		global $wpdb;
 		$table = $wpdb->prefix . self::STATS_TABLE;
 
@@ -1826,7 +1829,6 @@ class SIJAB_Tillbehor {
 			$since
 		) );
 
-		// Group rows by parent product.
 		$grouped = [];
 		foreach ( $per_parent as $row ) {
 			$pid = (int) $row->parent_product_id;
@@ -1835,10 +1837,9 @@ class SIJAB_Tillbehor {
 			$grouped[ $pid ]['total'] += (int) $row->total;
 			$grouped[ $pid ]['atc']   += (int) $row->atc;
 		}
-		// Sort parents by total clicks desc.
 		uasort( $grouped, function( $a, $b ) { return $b['total'] - $a['total']; } );
 
-		// Daily trend (for bar chart).
+		// Daily trend.
 		$daily = $wpdb->get_results( $wpdb->prepare(
 			"SELECT DATE(created_at) AS day,
 				SUM( event_type = 'add_to_cart' ) AS atc,
@@ -1857,24 +1858,14 @@ class SIJAB_Tillbehor {
 			if ( $day_total > $max_daily ) $max_daily = $day_total;
 		}
 		?>
-		<div class="wrap">
-			<h1><?php esc_html_e( 'Accessory Tab — Tillbehör', 'sijab-tillbehor' ); ?></h1>
-
-			<h2 class="nav-tab-wrapper">
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings#sijab-tab-visning' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Visning', 'sijab-tillbehor' ); ?></a>
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings#sijab-tab-api' ) ); ?>" class="nav-tab"><?php esc_html_e( 'API-inställningar', 'sijab-tillbehor' ); ?></a>
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings#sijab-tab-verktyg' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Verktyg', 'sijab-tillbehor' ); ?></a>
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-stats' ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Statistik', 'sijab-tillbehor' ); ?></a>
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings#sijab-tab-om' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Om', 'sijab-tillbehor' ); ?></a>
-			</h2>
+		<div id="sijab-tab-statistik" class="sijab-tab-panel">
 
 			<!-- Period filter -->
 			<div style="margin: 16px 0;">
 				<?php foreach ( $periods as $key => $label ) :
-					$url   = add_query_arg( 'period', $key, admin_url( 'admin.php?page=sijab-tillbehor-stats' ) );
 					$class = ( $key === $period ) ? 'button button-primary' : 'button';
 				?>
-					<a href="<?php echo esc_url( $url ); ?>" class="<?php echo esc_attr( $class ); ?>"><?php echo esc_html( $label ); ?></a>
+					<a href="#" class="sijab-period-btn <?php echo esc_attr( $class ); ?>" data-period="<?php echo esc_attr( $key ); ?>"><?php echo esc_html( $label ); ?></a>
 				<?php endforeach; ?>
 			</div>
 
