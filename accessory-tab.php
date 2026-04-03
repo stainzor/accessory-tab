@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.23.6
+ * Version: 2.24.1
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.23.6';
+	const VERSION       = '2.24.1';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -59,6 +59,7 @@ class SIJAB_Tillbehor {
 		add_action( 'wp_ajax_sijab_generate_bundle_content', [ $this, 'ajax_generate_bundle_content' ] );
 		add_action( 'wp_ajax_sijab_suggest_accessories', [ $this, 'ajax_suggest_accessories' ] );
 		add_action( 'wp_ajax_sijab_save_acc_category', [ $this, 'ajax_save_acc_category' ] );
+		add_action( 'wp_ajax_sijab_get_product_prices', [ $this, 'ajax_get_product_prices' ] );
 
 		// Frontend: paketprodukter.
 		add_action( 'woocommerce_single_product_summary', [ $this, 'render_bundle_section' ], 35 );
@@ -1101,6 +1102,98 @@ class SIJAB_Tillbehor {
 				color: #fff !important;
 			}
 
+			/* ── Bundle pricing box ── */
+			.sijab-pricing-box {
+				margin: 8px 12px 12px !important;
+				padding: 12px 16px !important;
+				border: 1px solid #dcdcde !important;
+				border-radius: 8px !important;
+				background: #f9f9f9 !important;
+			}
+			.sijab-pricing-row {
+				display: flex !important;
+				justify-content: space-between !important;
+				align-items: center !important;
+				padding: 6px 0 !important;
+				font-size: 13px !important;
+			}
+			.sijab-pricing-row + .sijab-pricing-row {
+				border-top: 1px solid #eee !important;
+			}
+			.sijab-pricing-label {
+				font-weight: 500 !important;
+				color: #50575e !important;
+			}
+			.sijab-pricing-value {
+				font-weight: 600 !important;
+				color: #1d2327 !important;
+				display: flex !important;
+				align-items: center !important;
+				gap: 6px !important;
+			}
+			.sijab-pricing-total {
+				background: #e8f5e9 !important;
+				margin: 4px -16px !important;
+				padding: 10px 16px !important;
+				border-radius: 6px !important;
+				font-size: 15px !important;
+			}
+			.sijab-pricing-total .sijab-pricing-value {
+				color: #2e7d32 !important;
+				font-size: 16px !important;
+			}
+			.sijab-discount-input-wrap {
+				display: inline-flex !important;
+				align-items: center !important;
+				border: 1px solid #8c8f94 !important;
+				border-radius: 4px !important;
+				overflow: hidden !important;
+				background: #fff !important;
+			}
+			.woocommerce_options_panel input.sijab-discount-input[type="number"],
+			#woocommerce-product-data input.sijab-discount-input[type="number"] {
+				width: 60px !important;
+				min-width: 60px !important;
+				max-width: 60px !important;
+				height: 30px !important;
+				padding: 0 4px !important;
+				margin: 0 !important;
+				border: none !important;
+				border-radius: 0 !important;
+				text-align: right !important;
+				font-size: 14px !important;
+				font-weight: 600 !important;
+				background: #fff !important;
+				box-shadow: none !important;
+				-moz-appearance: textfield !important;
+			}
+			input.sijab-discount-input::-webkit-inner-spin-button,
+			input.sijab-discount-input::-webkit-outer-spin-button { -webkit-appearance: none !important; }
+			.sijab-discount-pct {
+				padding: 0 8px !important;
+				font-weight: 600 !important;
+				color: #50575e !important;
+				background: #f0f0f0 !important;
+				height: 30px !important;
+				line-height: 30px !important;
+			}
+			.sijab-discount-amount {
+				color: #d63638 !important;
+				font-size: 13px !important;
+			}
+			.sijab-pricing-actions {
+				display: flex !important;
+				align-items: center !important;
+				gap: 10px !important;
+				padding: 10px 0 2px !important;
+				border-top: 1px solid #eee !important;
+				margin-top: 4px !important;
+			}
+			.sijab-price-status {
+				font-size: 13px !important;
+				font-style: italic !important;
+			}
+
 			#sijab_accessories_data .form-field label { width: 220px; }
 			#sijab_acc_sortable { margin: 0; padding: 0; list-style: none; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }
 			#sijab_acc_sortable:empty { border: none; }
@@ -1392,6 +1485,45 @@ class SIJAB_Tillbehor {
 				</p>
 			</div>
 
+			<?php
+			$bundle_discount = floatval( get_post_meta( $post->ID, '_sijab_bundle_discount', true ) );
+			$current_price   = get_post_meta( $post->ID, '_regular_price', true );
+			?>
+			<div id="sijab_bundle_pricing" class="options_group" style="<?php echo $is_bundle ? '' : 'display:none;'; ?>">
+				<p style="padding: 10px 12px 0; font-weight: 600;"><?php esc_html_e( 'Paketpris', 'sijab-tillbehor' ); ?></p>
+
+				<div class="sijab-pricing-box">
+					<div class="sijab-pricing-row">
+						<span class="sijab-pricing-label"><?php esc_html_e( 'Summa artiklar:', 'sijab-tillbehor' ); ?></span>
+						<span class="sijab-pricing-value" id="sijab_bundle_subtotal">—</span>
+					</div>
+					<div class="sijab-pricing-row">
+						<span class="sijab-pricing-label">
+							<?php esc_html_e( 'Rabatt:', 'sijab-tillbehor' ); ?>
+						</span>
+						<span class="sijab-pricing-value">
+							<div class="sijab-discount-input-wrap">
+								<input type="number" id="sijab_bundle_discount" name="sijab_bundle_discount" value="<?php echo esc_attr( $bundle_discount ?: '' ); ?>" min="0" max="100" step="0.5" placeholder="0" class="sijab-discount-input" />
+								<span class="sijab-discount-pct">%</span>
+							</div>
+							<span id="sijab_bundle_discount_amount" class="sijab-discount-amount"></span>
+						</span>
+					</div>
+					<div class="sijab-pricing-row sijab-pricing-total">
+						<span class="sijab-pricing-label"><?php esc_html_e( 'Paketpris:', 'sijab-tillbehor' ); ?></span>
+						<span class="sijab-pricing-value" id="sijab_bundle_total">—</span>
+					</div>
+					<div class="sijab-pricing-row">
+						<span class="sijab-pricing-label"><?php esc_html_e( 'Nuvarande pris:', 'sijab-tillbehor' ); ?></span>
+						<span class="sijab-pricing-value" id="sijab_current_price"><?php echo $current_price ? wc_price( $current_price ) : '—'; ?></span>
+					</div>
+					<div class="sijab-pricing-actions">
+						<button type="button" class="button button-primary" id="sijab_set_bundle_price"><?php esc_html_e( 'Sätt paketpris', 'sijab-tillbehor' ); ?></button>
+						<span id="sijab_price_status" class="sijab-price-status"></span>
+					</div>
+				</div>
+			</div>
+
 			<div id="sijab_ai_section" class="options_group" style="<?php echo $is_bundle ? '' : 'display:none;'; ?>">
 				<p style="padding: 10px 12px 0; font-weight: 600;"><?php esc_html_e( 'AI-genererat innehåll', 'sijab-tillbehor' ); ?></p>
 				<p style="padding: 6px 12px 4px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -1418,8 +1550,124 @@ class SIJAB_Tillbehor {
 			var rowIndex = <?php echo max( count( $items ), 1 ); ?>;
 
 			$('#sijab_is_bundle').on('change', function() {
-				$('#sijab_bundle_items_wrap, #sijab_ai_section').toggle(this.checked);
+				$('#sijab_bundle_items_wrap, #sijab_ai_section, #sijab_bundle_pricing').toggle(this.checked);
 			});
+
+			// ── Bundle pricing calculator ──
+			var priceCache = {};
+			var bundleNonce = '<?php echo wp_create_nonce( 'sijab_save_bundle' ); ?>';
+			var currencySymbol = '<?php echo esc_js( html_entity_decode( get_woocommerce_currency_symbol() ) ); ?>';
+
+			function formatPrice(amount) {
+				return parseFloat(amount).toLocaleString('sv-SE', {minimumFractionDigits: 0, maximumFractionDigits: 2}) + currencySymbol;
+			}
+
+			function recalcBundlePrice() {
+				var rows = $('#sijab_bundle_rows .sijab-bundle-row');
+				if (!rows.length) {
+					$('#sijab_bundle_subtotal').text('\u2014');
+					$('#sijab_bundle_total').text('\u2014');
+					$('#sijab_bundle_discount_amount').text('');
+					return;
+				}
+
+				// Collect product IDs we need prices for
+				var needFetch = [];
+				var allIds = [];
+				rows.each(function() {
+					var sel = $(this).find('select.wc-product-search');
+					var pid = sel.val();
+					if (pid) {
+						allIds.push({ id: parseInt(pid), qty: parseInt($(this).find('.sijab-bqty-input').val()) || 1 });
+						if (!priceCache[pid]) needFetch.push(pid);
+					}
+				});
+
+				if (!allIds.length) {
+					$('#sijab_bundle_subtotal').text('\u2014');
+					$('#sijab_bundle_total').text('\u2014');
+					return;
+				}
+
+				function doCalc() {
+					var subtotal = 0;
+					allIds.forEach(function(item) {
+						var p = priceCache[item.id];
+						if (p) subtotal += p.price * item.qty;
+					});
+
+					var discount = parseFloat($('#sijab_bundle_discount').val()) || 0;
+					var discountAmount = subtotal * (discount / 100);
+					var total = subtotal - discountAmount;
+
+					$('#sijab_bundle_subtotal').text(formatPrice(subtotal));
+					$('#sijab_bundle_total').text(formatPrice(Math.round(total * 100) / 100));
+					if (discount > 0 && subtotal > 0) {
+						$('#sijab_bundle_discount_amount').text('-' + formatPrice(Math.round(discountAmount * 100) / 100));
+					} else {
+						$('#sijab_bundle_discount_amount').text('');
+					}
+				}
+
+				if (needFetch.length) {
+					$('#sijab_bundle_subtotal').text('<?php echo esc_js( __( 'Hämtar priser…', 'sijab-tillbehor' ) ); ?>');
+					$.post(ajaxurl, {
+						action: 'sijab_get_product_prices',
+						nonce: bundleNonce,
+						product_ids: needFetch.join(',')
+					}, function(res) {
+						if (res.success) {
+							$.each(res.data, function(id, info) {
+								priceCache[id] = info;
+							});
+						}
+						doCalc();
+					});
+				} else {
+					doCalc();
+				}
+			}
+
+			// "Sätt paketpris" button — copies calculated price to WC regular price field
+			$('#sijab_set_bundle_price').on('click', function() {
+				var totalText = $('#sijab_bundle_total').text().replace(/[^\d,.\-]/g, '').replace(',', '.');
+				var total = parseFloat(totalText);
+				if (isNaN(total) || total <= 0) {
+					$('#sijab_price_status').css('color', '#a00').text('<?php echo esc_js( __( 'Inget pris att sätta.', 'sijab-tillbehor' ) ); ?>');
+					return;
+				}
+				// Set WooCommerce regular price field
+				$('#_regular_price').val(total.toFixed(2));
+				$('#sijab_current_price').html(formatPrice(total));
+				$('#sijab_price_status').css('color', '#46b450').text('<?php echo esc_js( __( 'Pris satt! Klicka Uppdatera för att spara.', 'sijab-tillbehor' ) ); ?>');
+			});
+
+			// Trigger recalc on changes
+			$(document).on('change', '#sijab_bundle_rows select.wc-product-search', recalcBundlePrice);
+			$(document).on('change input', '.sijab-bqty-input', recalcBundlePrice);
+			$(document).on('click', '.sijab-bqty-minus, .sijab-bqty-plus', function() { setTimeout(recalcBundlePrice, 50); });
+			$(document).on('click', '.sijab-bundle-remove', function() { setTimeout(recalcBundlePrice, 50); });
+			$('#sijab_bundle_discount').on('input change', recalcBundlePrice);
+
+			// Initial calculation on page load
+			<?php if ( $is_bundle && ! empty( $items ) ) : ?>
+			// Pre-populate price cache from PHP
+			<?php
+			$price_data = [];
+			foreach ( $items as $item ) {
+				$p = wc_get_product( $item['product_id'] ?? 0 );
+				if ( $p ) {
+					$price_data[ $item['product_id'] ] = [
+						'price'         => floatval( $p->get_price() ),
+						'regular_price' => floatval( $p->get_regular_price() ),
+						'name'          => $p->get_name(),
+					];
+				}
+			}
+			?>
+			priceCache = <?php echo wp_json_encode( $price_data ); ?>;
+			recalcBundlePrice();
+			<?php endif; ?>
 
 			$('#sijab_generate_ai_btn').on('click', function() {
 				var btn    = $(this);
@@ -1550,6 +1798,31 @@ class SIJAB_Tillbehor {
 		}
 
 		update_post_meta( $product->get_id(), self::BUNDLE_META, $items );
+
+		// Save bundle discount percentage.
+		$discount = isset( $_POST['sijab_bundle_discount'] ) ? floatval( $_POST['sijab_bundle_discount'] ) : 0;
+		$discount = max( 0, min( 100, $discount ) );
+		update_post_meta( $product->get_id(), '_sijab_bundle_discount', $discount ? $discount : '' );
+	}
+
+	/**
+	 * AJAX: Return prices for given product IDs (for bundle pricing calculator).
+	 */
+	public function ajax_get_product_prices(): void {
+		check_ajax_referer( 'sijab_save_bundle', 'nonce' );
+		$ids = array_map( 'absint', explode( ',', sanitize_text_field( $_POST['product_ids'] ?? '' ) ) );
+		$prices = [];
+		foreach ( $ids as $id ) {
+			if ( ! $id ) continue;
+			$p = wc_get_product( $id );
+			if ( ! $p ) continue;
+			$prices[ $id ] = [
+				'price'         => floatval( $p->get_price() ),
+				'regular_price' => floatval( $p->get_regular_price() ),
+				'name'          => $p->get_name(),
+			];
+		}
+		wp_send_json_success( $prices );
 	}
 
 	// ──────────────────────────────────────────────────────────────
