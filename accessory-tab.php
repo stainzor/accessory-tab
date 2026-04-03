@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.20.1
+ * Version: 2.21.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.20.1';
+	const VERSION       = '2.21.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -71,6 +71,12 @@ class SIJAB_Tillbehor {
 		add_action( 'wp_ajax_sijab_acc_track', [ $this, 'ajax_track_event' ] );
 		add_action( 'wp_ajax_nopriv_sijab_acc_track', [ $this, 'ajax_track_event' ] );
 		add_action( 'sijab_acc_stats_cleanup', [ $this, 'cleanup_old_stats' ] );
+
+		// Order tracking: tag cart items added via accessory plugin.
+		add_filter( 'woocommerce_add_cart_item_data', [ $this, 'tag_cart_item' ], 10, 2 );
+		add_action( 'woocommerce_checkout_create_order_line_item', [ $this, 'save_accessory_meta_to_order' ], 10, 4 );
+		add_action( 'woocommerce_order_status_completed', [ $this, 'record_accessory_purchases' ] );
+		add_action( 'woocommerce_order_status_processing', [ $this, 'record_accessory_purchases' ] );
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -656,11 +662,12 @@ class SIJAB_Tillbehor {
 								<input type="number" class="sijab-qty-input" value="1" min="1" step="1" aria-label="<?php esc_attr_e( 'Antal', 'sijab-tillbehor' ); ?>" />
 								<button type="button" class="sijab-qty-btn sijab-qty-plus" aria-label="<?php esc_attr_e( 'Öka antal', 'sijab-tillbehor' ); ?>">+</button>
 							</div>
-							<a href="<?php echo esc_url( $acc->add_to_cart_url() ); ?>"
+							<a href="<?php echo esc_url( add_query_arg( 'sijab_acc_parent', $GLOBALS['product']->get_id(), $acc->add_to_cart_url() ) ); ?>"
 							   data-quantity="1"
 							   class="button sijab-acc-atc-btn add_to_cart_button ajax_add_to_cart sijab-acc-atc"
 							   data-product_id="<?php echo absint( $id ); ?>"
 							   data-product_sku="<?php echo esc_attr( $sku ); ?>"
+							   data-sijab_acc_parent="<?php echo absint( $GLOBALS['product']->get_id() ); ?>"
 							   aria-label="<?php echo esc_attr( $acc->add_to_cart_description() ); ?>"
 							   rel="nofollow">
 								<?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?>
@@ -1767,6 +1774,60 @@ class SIJAB_Tillbehor {
 		) );
 	}
 
+	// ──────────────────────────────────────────────────────────────
+	// Order tracking
+	// ──────────────────────────────────────────────────────────────
+
+	/**
+	 * Tag cart item with accessory info when added via the plugin.
+	 */
+	public function tag_cart_item( array $cart_item_data, int $product_id ): array {
+		if ( ! empty( $_REQUEST['sijab_acc_parent'] ) ) {
+			$cart_item_data['_sijab_acc_parent'] = absint( $_REQUEST['sijab_acc_parent'] );
+		}
+		return $cart_item_data;
+	}
+
+	/**
+	 * Save accessory parent ID to order line item meta.
+	 */
+	public function save_accessory_meta_to_order( $item, $cart_item_key, $values, $order ): void {
+		if ( ! empty( $values['_sijab_acc_parent'] ) ) {
+			$item->add_meta_data( '_sijab_acc_parent', absint( $values['_sijab_acc_parent'] ), true );
+		}
+	}
+
+	/**
+	 * Record purchases in stats table when order is completed/processing.
+	 */
+	public function record_accessory_purchases( int $order_id ): void {
+		$order = wc_get_order( $order_id );
+		if ( ! $order ) return;
+
+		// Prevent double-counting.
+		if ( $order->get_meta( '_sijab_acc_purchases_recorded' ) ) return;
+
+		global $wpdb;
+		$table = $wpdb->prefix . self::STATS_TABLE;
+
+		foreach ( $order->get_items() as $item ) {
+			$parent_id = (int) $item->get_meta( '_sijab_acc_parent' );
+			if ( ! $parent_id ) continue;
+
+			$product_id = $item->get_product_id();
+
+			$wpdb->insert( $table, [
+				'parent_product_id'    => $parent_id,
+				'accessory_product_id' => $product_id,
+				'event_type'           => 'purchase',
+				'created_at'           => $order->get_date_created() ? $order->get_date_created()->date( 'Y-m-d H:i:s' ) : current_time( 'mysql' ),
+			], [ '%d', '%d', '%s', '%s' ] );
+		}
+
+		$order->update_meta_data( '_sijab_acc_purchases_recorded', 1 );
+		$order->save();
+	}
+
 	/**
 	 * Schedule daily cleanup cron.
 	 */
@@ -1813,15 +1874,18 @@ class SIJAB_Tillbehor {
 		$since = gmdate( 'Y-m-d H:i:s', strtotime( "-{$days} days" ) );
 
 		// Summary counts.
-		$total_clicks   = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE created_at >= %s", $since ) );
+		$total_clicks   = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type != 'purchase' AND created_at >= %s", $since ) );
 		$add_to_cart    = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type = 'add_to_cart' AND created_at >= %s", $since ) );
+		$purchases      = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type = 'purchase' AND created_at >= %s", $since ) );
 		$view_product   = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type = 'view_product' AND created_at >= %s", $since ) );
 		$product_click  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type = 'product_click' AND created_at >= %s", $since ) );
+		$conversion     = $add_to_cart > 0 ? round( $purchases / $add_to_cart * 100, 1 ) : 0;
 
 		// Accessories chosen per parent product.
 		$per_parent = $wpdb->get_results( $wpdb->prepare(
 			"SELECT parent_product_id, accessory_product_id,
 				SUM( event_type = 'add_to_cart' ) AS atc,
+				SUM( event_type = 'purchase' ) AS purchases,
 				SUM( event_type = 'view_product' ) AS vp,
 				SUM( event_type = 'product_click' ) AS pc,
 				COUNT(*) AS total
@@ -1835,10 +1899,11 @@ class SIJAB_Tillbehor {
 		$grouped = [];
 		foreach ( $per_parent as $row ) {
 			$pid = (int) $row->parent_product_id;
-			if ( ! isset( $grouped[ $pid ] ) ) $grouped[ $pid ] = [ 'rows' => [], 'total' => 0, 'atc' => 0 ];
+			if ( ! isset( $grouped[ $pid ] ) ) $grouped[ $pid ] = [ 'rows' => [], 'total' => 0, 'atc' => 0, 'purchases' => 0 ];
 			$grouped[ $pid ]['rows'][] = $row;
-			$grouped[ $pid ]['total'] += (int) $row->total;
-			$grouped[ $pid ]['atc']   += (int) $row->atc;
+			$grouped[ $pid ]['total']     += (int) $row->total;
+			$grouped[ $pid ]['atc']       += (int) $row->atc;
+			$grouped[ $pid ]['purchases'] += (int) $row->purchases;
 		}
 		uasort( $grouped, function( $a, $b ) { return $b['total'] - $a['total']; } );
 
@@ -1846,6 +1911,7 @@ class SIJAB_Tillbehor {
 		$daily = $wpdb->get_results( $wpdb->prepare(
 			"SELECT DATE(created_at) AS day,
 				SUM( event_type = 'add_to_cart' ) AS atc,
+				SUM( event_type = 'purchase' ) AS purchases,
 				SUM( event_type = 'view_product' ) AS vp,
 				SUM( event_type = 'product_click' ) AS pc
 			FROM {$table}
@@ -1857,7 +1923,7 @@ class SIJAB_Tillbehor {
 
 		$max_daily = 1;
 		foreach ( $daily as $d ) {
-			$day_total = (int) $d->atc + (int) $d->vp + (int) $d->pc;
+			$day_total = (int) $d->atc + (int) $d->purchases + (int) $d->vp + (int) $d->pc;
 			if ( $day_total > $max_daily ) $max_daily = $day_total;
 		}
 		?>
@@ -1873,22 +1939,22 @@ class SIJAB_Tillbehor {
 			</div>
 
 			<!-- Summary boxes -->
-			<div style="display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 24px;">
-				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 24px; min-width:150px;">
-					<div style="font-size:28px; font-weight:700; color:#1e73be;"><?php echo number_format_i18n( $total_clicks ); ?></div>
-					<div style="color:#50575e;">Totala klick</div>
+			<div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px;">
+				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 20px; min-width:130px;">
+					<div style="font-size:28px; font-weight:700; color:#2e7d32;"><?php echo number_format_i18n( $purchases ); ?></div>
+					<div style="color:#50575e;">Köp via tillbehör</div>
 				</div>
-				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 24px; min-width:150px;">
+				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 20px; min-width:130px;">
 					<div style="font-size:28px; font-weight:700; color:#00a32a;"><?php echo number_format_i18n( $add_to_cart ); ?></div>
 					<div style="color:#50575e;">Lägg i varukorg</div>
 				</div>
-				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 24px; min-width:150px;">
-					<div style="font-size:28px; font-weight:700; color:#9b59b6;"><?php echo number_format_i18n( $view_product ); ?></div>
-					<div style="color:#50575e;">Visa produkt</div>
+				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 20px; min-width:130px;">
+					<div style="font-size:28px; font-weight:700; color:#1e73be;"><?php echo $conversion; ?>%</div>
+					<div style="color:#50575e;">Konvertering</div>
 				</div>
-				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 24px; min-width:150px;">
-					<div style="font-size:28px; font-weight:700; color:#e67e22;"><?php echo number_format_i18n( $product_click ); ?></div>
-					<div style="color:#50575e;">Produktklick</div>
+				<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px 20px; min-width:130px;">
+					<div style="font-size:28px; font-weight:700; color:#e67e22;"><?php echo number_format_i18n( $total_clicks ); ?></div>
+					<div style="color:#50575e;">Totala klick</div>
 				</div>
 			</div>
 
@@ -1898,18 +1964,21 @@ class SIJAB_Tillbehor {
 			<div style="background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:16px; margin-bottom:24px; overflow-x:auto;">
 				<div style="display:flex; align-items:flex-end; gap:2px; height:180px; min-width:<?php echo count( $daily ) * 18; ?>px;">
 					<?php foreach ( $daily as $d ) :
-						$atc = (int) $d->atc;
-						$vp  = (int) $d->vp;
-						$pc  = (int) $d->pc;
-						$h_atc = round( $atc / $max_daily * 160 );
-						$h_vp  = round( $vp / $max_daily * 160 );
-						$h_pc  = round( $pc / $max_daily * 160 );
+						$atc  = (int) $d->atc;
+						$purch = (int) $d->purchases;
+						$vp   = (int) $d->vp;
+						$pc   = (int) $d->pc;
+						$h_purch = round( $purch / $max_daily * 160 );
+						$h_atc   = round( $atc / $max_daily * 160 );
+						$h_vp    = round( $vp / $max_daily * 160 );
+						$h_pc    = round( $pc / $max_daily * 160 );
 					?>
 						<div style="flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; min-width:14px;"
-						     title="<?php echo esc_attr( $d->day . ': ' . ( $atc + $vp + $pc ) . ' klick' ); ?>">
+						     title="<?php echo esc_attr( $d->day . ': ' . $purch . ' köp, ' . $atc . ' varukorg, ' . ( $vp + $pc ) . ' klick' ); ?>">
 							<?php if ( $pc ) : ?><div style="width:100%; max-width:16px; height:<?php echo $h_pc; ?>px; background:#e67e22; border-radius:2px 2px 0 0;"></div><?php endif; ?>
 							<?php if ( $vp ) : ?><div style="width:100%; max-width:16px; height:<?php echo $h_vp; ?>px; background:#9b59b6;"></div><?php endif; ?>
-							<?php if ( $atc ) : ?><div style="width:100%; max-width:16px; height:<?php echo $h_atc; ?>px; background:#00a32a; border-radius:0 0 2px 2px;"></div><?php endif; ?>
+							<?php if ( $atc ) : ?><div style="width:100%; max-width:16px; height:<?php echo $h_atc; ?>px; background:#00a32a;"></div><?php endif; ?>
+							<?php if ( $purch ) : ?><div style="width:100%; max-width:16px; height:<?php echo $h_purch; ?>px; background:#2e7d32; border-radius:0 0 2px 2px;"></div><?php endif; ?>
 						</div>
 					<?php endforeach; ?>
 				</div>
@@ -1918,7 +1987,8 @@ class SIJAB_Tillbehor {
 					<span><?php echo esc_html( end( $daily )->day ?? '' ); ?></span>
 				</div>
 				<div style="margin-top:8px; font-size:12px;">
-					<span style="display:inline-block; width:12px; height:12px; background:#00a32a; border-radius:2px; vertical-align:middle;"></span> Lägg i varukorg
+					<span style="display:inline-block; width:12px; height:12px; background:#2e7d32; border-radius:2px; vertical-align:middle;"></span> Köp
+					<span style="display:inline-block; width:12px; height:12px; background:#00a32a; border-radius:2px; vertical-align:middle; margin-left:12px;"></span> Varukorg
 					<span style="display:inline-block; width:12px; height:12px; background:#9b59b6; border-radius:2px; vertical-align:middle; margin-left:12px;"></span> Visa produkt
 					<span style="display:inline-block; width:12px; height:12px; background:#e67e22; border-radius:2px; vertical-align:middle; margin-left:12px;"></span> Produktklick
 				</div>
@@ -1939,17 +2009,17 @@ class SIJAB_Tillbehor {
 							<?php echo $parent_url ? '<a href="' . esc_url( $parent_url ) . '">' . esc_html( $parent_name ) . '</a>' : esc_html( $parent_name ); ?>
 						</h4>
 						<span style="color:#50575e; font-size:13px;">
-							<?php echo number_format_i18n( $group['atc'] ); ?> tillagda i varukorg &middot; <?php echo number_format_i18n( $group['total'] ); ?> totala klick
+							<strong style="color:#2e7d32;"><?php echo number_format_i18n( $group['purchases'] ); ?> köp</strong> &middot; <?php echo number_format_i18n( $group['atc'] ); ?> varukorg &middot; <?php echo number_format_i18n( $group['total'] ); ?> totala
 						</span>
 					</div>
 					<table class="widefat striped" style="margin:0;">
 						<thead>
 							<tr>
 								<th>Tillbehör</th>
-								<th>Lägg i varukorg</th>
+								<th>Köp</th>
+								<th>Varukorg</th>
 								<th>Visa produkt</th>
 								<th>Produktklick</th>
-								<th>Totalt</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -1960,10 +2030,10 @@ class SIJAB_Tillbehor {
 							?>
 							<tr>
 								<td><?php echo $acc_url ? '<a href="' . esc_url( $acc_url ) . '">' . esc_html( $acc_name ) . '</a>' : esc_html( $acc_name ); ?></td>
+								<td><strong style="color:#2e7d32;"><?php echo number_format_i18n( (int) $row->purchases ); ?></strong></td>
 								<td><?php echo number_format_i18n( (int) $row->atc ); ?></td>
 								<td><?php echo number_format_i18n( (int) $row->vp ); ?></td>
 								<td><?php echo number_format_i18n( (int) $row->pc ); ?></td>
-								<td><strong><?php echo number_format_i18n( (int) $row->total ); ?></strong></td>
 							</tr>
 							<?php endforeach; ?>
 						</tbody>

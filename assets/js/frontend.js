@@ -166,6 +166,10 @@
 		body.append('variation_id', varId);
 		body.append('quantity',     '1');
 		Object.keys(attrs).forEach(function (key) { body.append(key, attrs[key]); });
+		// Tag for order tracking.
+		if (typeof sijabAccStats !== 'undefined' && sijabAccStats.parent_id) {
+			body.append('sijab_acc_parent', sijabAccStats.parent_id);
+		}
 
 		fetch(wcUrl, { method: 'POST', body: body })
 			.then(function (r) { return r.json(); })
