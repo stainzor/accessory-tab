@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.23.3
+ * Version: 2.23.4
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.23.3';
+	const VERSION       = '2.23.4';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -83,7 +83,7 @@ class SIJAB_Tillbehor {
 
 		// Admin: filter by bundle in product list.
 		add_filter( 'woocommerce_product_filters', [ $this, 'add_bundle_type_filter' ] );
-		add_filter( 'request', [ $this, 'filter_products_by_bundle' ], 1 );
+		add_action( 'pre_get_posts', [ $this, 'filter_products_by_bundle' ], 1 );
 
 		// Order tracking: tag cart items added via accessory plugin.
 		add_filter( 'woocommerce_add_cart_item_data', [ $this, 'tag_cart_item' ], 10, 2 );
@@ -2022,32 +2022,29 @@ class SIJAB_Tillbehor {
 
 	/**
 	 * Filter admin product list when "Paket" is selected.
-	 * Uses 'request' filter (priority 1) to intercept BEFORE WooCommerce processes
-	 * the product_type GET parameter as a taxonomy query.
+	 * Uses pre_get_posts priority 1 to intercept BEFORE WooCommerce (priority 10)
+	 * processes the product_type GET parameter as a taxonomy query.
 	 */
-	public function filter_products_by_bundle( array $query_vars ): array {
-		global $typenow;
+	public function filter_products_by_bundle( $query ): void {
+		if ( ! is_admin() || ! $query->is_main_query() ) return;
+		if ( ! isset( $_GET['post_type'] ) || $_GET['post_type'] !== 'product' ) return;
+		if ( ! isset( $_GET['product_type'] ) || $_GET['product_type'] !== 'sijab_bundle' ) return;
 
-		if ( ! is_admin() ) return $query_vars;
-		if ( $typenow !== 'product' && ( ! isset( $_GET['post_type'] ) || $_GET['post_type'] !== 'product' ) ) return $query_vars;
-		if ( ! isset( $_GET['product_type'] ) || $_GET['product_type'] !== 'sijab_bundle' ) return $query_vars;
-
-		// Remove product_type so WooCommerce doesn't try to filter by a non-existent product type taxonomy.
+		// Remove product_type BEFORE WooCommerce sees it — otherwise WC adds
+		// a tax_query for a non-existent product type taxonomy term, returning 0 results.
 		unset( $_GET['product_type'] );
 
 		// Add meta_query to filter by bundle flag.
-		$meta_query = $query_vars['meta_query'] ?? [];
+		$meta_query = $query->get( 'meta_query' ) ?: [];
 		$meta_query[] = [
 			'key'     => self::BUNDLE_FLAG,
 			'value'   => '1',
 			'compare' => '=',
 		];
-		$query_vars['meta_query'] = $meta_query;
+		$query->set( 'meta_query', $meta_query );
 
 		// Restore GET param so the dropdown still shows "Paket" as selected.
 		$_GET['product_type'] = 'sijab_bundle';
-
-		return $query_vars;
 	}
 
 	// ──────────────────────────────────────────────────────────────
