@@ -188,7 +188,7 @@ class SIJAB_Tillbehor {
 		$ai_key   = get_option( 'sijab_openai_api_key', '' );
 		?>
 		<div class="wrap">
-			<h1><?php esc_html_e( 'Accessory Tab — Inställningar', 'sijab-tillbehor' ); ?></h1>
+			<h1><?php esc_html_e( 'Accessory Tab — Tillbehör', 'sijab-tillbehor' ); ?></h1>
 
 			<h2 class="nav-tab-wrapper">
 				<a href="#" class="nav-tab sijab-nav-tab" data-tab="visning"><?php esc_html_e( 'Visning', 'sijab-tillbehor' ); ?></a>
@@ -1581,10 +1581,12 @@ class SIJAB_Tillbehor {
 		}
 		?>
 		<div class="wrap">
-			<h1><?php esc_html_e( 'Accessory Tab — Statistik', 'sijab-tillbehor' ); ?></h1>
+			<h1><?php esc_html_e( 'Accessory Tab — Tillbehör', 'sijab-tillbehor' ); ?></h1>
 
 			<h2 class="nav-tab-wrapper">
-				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Inställningar', 'sijab-tillbehor' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings#sijab-tab-visning' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Visning', 'sijab-tillbehor' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings#sijab-tab-api' ) ); ?>" class="nav-tab"><?php esc_html_e( 'API-inställningar', 'sijab-tillbehor' ); ?></a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-settings#sijab-tab-verktyg' ) ); ?>" class="nav-tab"><?php esc_html_e( 'Verktyg', 'sijab-tillbehor' ); ?></a>
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=sijab-tillbehor-stats' ) ); ?>" class="nav-tab nav-tab-active"><?php esc_html_e( 'Statistik', 'sijab-tillbehor' ); ?></a>
 			</h2>
 
