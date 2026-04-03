@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.23.2
+ * Version: 2.23.3
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.23.2';
+	const VERSION       = '2.23.3';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -83,7 +83,7 @@ class SIJAB_Tillbehor {
 
 		// Admin: filter by bundle in product list.
 		add_filter( 'woocommerce_product_filters', [ $this, 'add_bundle_type_filter' ] );
-		add_action( 'parse_query', [ $this, 'filter_products_by_bundle' ] );
+		add_filter( 'request', [ $this, 'filter_products_by_bundle' ], 1 );
 
 		// Order tracking: tag cart items added via accessory plugin.
 		add_filter( 'woocommerce_add_cart_item_data', [ $this, 'tag_cart_item' ], 10, 2 );
@@ -979,38 +979,52 @@ class SIJAB_Tillbehor {
 			/* ── Bundle admin row ── */
 			.sijab-bundle-row {
 				display: flex !important;
+				flex-direction: row !important;
+				flex-wrap: nowrap !important;
 				align-items: center !important;
-				gap: 12px !important;
-				padding: 10px 12px !important;
+				gap: 10px !important;
+				padding: 8px 12px !important;
 				margin: 0 12px 6px !important;
 				border: 1px solid #dcdcde !important;
 				border-radius: 6px !important;
 				background: #f9f9f9 !important;
 			}
+			/* Product dropdown — takes remaining space */
 			.sijab-brow-product {
-				flex: 1 !important;
+				flex: 1 1 auto !important;
 				min-width: 0 !important;
+				max-width: none !important;
 			}
 			.sijab-brow-product .select2-container { width: 100% !important; }
 			.sijab-brow-product select { width: 100% !important; }
+			/* Actions: pill + st + remove — fixed to right */
 			.sijab-brow-actions {
 				display: flex !important;
+				flex-direction: row !important;
+				flex-wrap: nowrap !important;
 				align-items: center !important;
-				gap: 8px !important;
-				flex-shrink: 0 !important;
+				gap: 6px !important;
+				flex: 0 0 auto !important;
+				white-space: nowrap !important;
 			}
-			/* Pill qty */
+			/* Pill qty container */
 			.sijab-bqty-pill {
 				display: inline-flex !important;
+				flex-direction: row !important;
+				flex-wrap: nowrap !important;
 				align-items: center !important;
 				border: 1px solid #8c8f94 !important;
 				border-radius: 99px !important;
 				overflow: hidden !important;
 				background: #fff !important;
 				height: 32px !important;
-				flex-shrink: 0 !important;
+				flex: 0 0 auto !important;
+				width: auto !important;
+				max-width: none !important;
 			}
-			button.sijab-bqty-btn {
+			/* +/- buttons */
+			.sijab-bqty-pill > button.sijab-bqty-btn,
+			.woocommerce_options_panel .sijab-bqty-pill > button.sijab-bqty-btn {
 				display: flex !important;
 				align-items: center !important;
 				justify-content: center !important;
@@ -1028,13 +1042,18 @@ class SIJAB_Tillbehor {
 				line-height: 1 !important;
 				box-shadow: none !important;
 				float: none !important;
+				flex: 0 0 30px !important;
 			}
-			button.sijab-bqty-btn:hover { background: #f0f0f0 !important; color: #1d2327 !important; }
-			input.sijab-bqty-input {
+			.sijab-bqty-pill > button.sijab-bqty-btn:hover { background: #f0f0f0 !important; color: #1d2327 !important; }
+			/* Qty number input — MUST stay 46px despite WC overrides */
+			.sijab-bqty-pill > input.sijab-bqty-input,
+			.woocommerce_options_panel .sijab-bqty-pill > input.sijab-bqty-input,
+			.woocommerce_options_panel input.sijab-bqty-input[type="number"],
+			#woocommerce-product-data input.sijab-bqty-input[type="number"] {
 				width: 46px !important;
 				min-width: 46px !important;
 				max-width: 46px !important;
-				height: 100% !important;
+				height: 30px !important;
 				padding: 0 !important;
 				margin: 0 !important;
 				border: none !important;
@@ -1051,6 +1070,7 @@ class SIJAB_Tillbehor {
 				box-shadow: none !important;
 				outline: none !important;
 				float: none !important;
+				flex: 0 0 46px !important;
 				-moz-appearance: textfield !important;
 			}
 			input.sijab-bqty-input::-webkit-inner-spin-button,
@@ -1059,19 +1079,21 @@ class SIJAB_Tillbehor {
 				font-size: 13px !important;
 				font-weight: 600 !important;
 				color: #50575e !important;
+				flex: 0 0 auto !important;
 			}
 			a.sijab-bundle-remove {
 				display: flex !important;
 				align-items: center !important;
 				justify-content: center !important;
 				width: 28px !important;
+				min-width: 28px !important;
 				height: 28px !important;
 				border-radius: 50% !important;
 				color: #a00 !important;
 				font-size: 14px !important;
 				text-decoration: none !important;
 				transition: all 0.15s !important;
-				flex-shrink: 0 !important;
+				flex: 0 0 28px !important;
 			}
 			a.sijab-bundle-remove:hover {
 				background: #d63638 !important;
@@ -2000,28 +2022,32 @@ class SIJAB_Tillbehor {
 
 	/**
 	 * Filter admin product list when "Paket" is selected.
-	 * Hooks into parse_query instead of pre_get_posts to intercept before WC processes.
+	 * Uses 'request' filter (priority 1) to intercept BEFORE WooCommerce processes
+	 * the product_type GET parameter as a taxonomy query.
 	 */
-	public function filter_products_by_bundle( $query ): void {
+	public function filter_products_by_bundle( array $query_vars ): array {
 		global $typenow;
 
-		if ( ! is_admin() || ! $query->is_main_query() ) return;
-		if ( $typenow !== 'product' ) return;
-		if ( ! isset( $_GET['product_type'] ) || $_GET['product_type'] !== 'sijab_bundle' ) return;
+		if ( ! is_admin() ) return $query_vars;
+		if ( $typenow !== 'product' && ( ! isset( $_GET['post_type'] ) || $_GET['post_type'] !== 'product' ) ) return $query_vars;
+		if ( ! isset( $_GET['product_type'] ) || $_GET['product_type'] !== 'sijab_bundle' ) return $query_vars;
 
-		// Remove product_type from query to prevent WC from filtering on non-existent type.
+		// Remove product_type so WooCommerce doesn't try to filter by a non-existent product type taxonomy.
 		unset( $_GET['product_type'] );
 
-		$meta_query = $query->get( 'meta_query' ) ?: [];
+		// Add meta_query to filter by bundle flag.
+		$meta_query = $query_vars['meta_query'] ?? [];
 		$meta_query[] = [
 			'key'     => self::BUNDLE_FLAG,
 			'value'   => '1',
 			'compare' => '=',
 		];
-		$query->set( 'meta_query', $meta_query );
+		$query_vars['meta_query'] = $meta_query;
 
-		// Restore for the dropdown to show "selected".
+		// Restore GET param so the dropdown still shows "Paket" as selected.
 		$_GET['product_type'] = 'sijab_bundle';
+
+		return $query_vars;
 	}
 
 	// ──────────────────────────────────────────────────────────────
