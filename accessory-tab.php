@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.18.0
+ * Version: 2.19.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.18.0';
+	const VERSION       = '2.19.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -57,6 +57,7 @@ class SIJAB_Tillbehor {
 
 		// AI-generering.
 		add_action( 'wp_ajax_sijab_generate_bundle_content', [ $this, 'ajax_generate_bundle_content' ] );
+		add_action( 'wp_ajax_sijab_suggest_accessories', [ $this, 'ajax_suggest_accessories' ] );
 
 		// Frontend: paketprodukter.
 		add_action( 'woocommerce_single_product_summary', [ $this, 'render_bundle_section' ], 35 );
@@ -798,6 +799,25 @@ class SIJAB_Tillbehor {
 					<textarea id="sijab_accessories_skus" name="sijab_accessories_skus" rows="2" style="width:60%;" placeholder="EX123, EX456, EX789"></textarea>
 				</p>
 
+				<!-- AI-förslag -->
+				<?php if ( get_option( 'sijab_openai_api_key', '' ) ) : ?>
+				<div class="form-field" style="padding: 5px 20px 10px;">
+					<?php wp_nonce_field( 'sijab_suggest_accessories', 'sijab_suggest_nonce' ); ?>
+					<button type="button" class="button button-secondary" id="sijab_ai_suggest_btn" data-product-id="<?php echo absint( $post->ID ); ?>">
+						✨ <?php esc_html_e( 'Föreslå tillbehör med AI', 'sijab-tillbehor' ); ?>
+					</button>
+					<span id="sijab_ai_spinner" class="spinner" style="float:none; margin-top:0;"></span>
+					<div id="sijab_ai_results" style="display:none; margin-top:12px;">
+						<p style="font-weight:600; margin-bottom:8px;">AI-förslag — välj vilka du vill lägga till:</p>
+						<div id="sijab_ai_results_list"></div>
+						<p style="margin-top:8px;">
+							<button type="button" class="button button-primary" id="sijab_ai_add_selected"><?php esc_html_e( 'Lägg till valda', 'sijab-tillbehor' ); ?></button>
+							<button type="button" class="button" id="sijab_ai_dismiss"><?php esc_html_e( 'Stäng', 'sijab-tillbehor' ); ?></button>
+						</p>
+					</div>
+				</div>
+				<?php endif; ?>
+
 				<!-- Kategori-länk -->
 				<p class="form-field">
 					<label for="sijab_acc_category"><?php esc_html_e( 'Länka till tillbehörskategori', 'sijab-tillbehor' ); ?></label>
@@ -986,6 +1006,79 @@ class SIJAB_Tillbehor {
 						$('#sijab_acc_empty_msg').show();
 					}
 				});
+			});
+
+			// AI Suggest accessories
+			$('#sijab_ai_suggest_btn').on('click', function(){
+				var btn = $(this);
+				var spinner = $('#sijab_ai_spinner');
+				btn.prop('disabled', true);
+				spinner.addClass('is-active');
+				$('#sijab_ai_results').hide();
+
+				$.post(ajaxurl, {
+					action: 'sijab_suggest_accessories',
+					nonce: $('#sijab_suggest_nonce').val(),
+					product_id: btn.data('product-id')
+				}, function(resp) {
+					spinner.removeClass('is-active');
+					btn.prop('disabled', false);
+					if (!resp.success) {
+						alert(resp.data || 'Fel vid AI-förfrågan.');
+						return;
+					}
+					var products = resp.data.products;
+					if (!products.length) {
+						alert('Inga matchande produkter hittades i butiken.');
+						return;
+					}
+					var html = '';
+					var currentKw = '';
+					products.forEach(function(p) {
+						if (p.keyword !== currentKw) {
+							currentKw = p.keyword;
+							html += '<p style=\"margin:8px 0 4px; font-size:12px; color:#666; text-transform:uppercase; letter-spacing:0.5px;\">' + $('<span>').text(currentKw).html() + '</p>';
+						}
+						html += '<label style=\"display:flex; align-items:center; gap:8px; padding:6px 8px; border:1px solid #eee; border-radius:4px; margin-bottom:4px; background:#fff; cursor:pointer;\">'
+							+ '<input type=\"checkbox\" class=\"sijab-ai-check\" value=\"' + p.id + '\" data-name=\"' + $('<span>').text(p.name).html() + '\" data-thumb=\"' + p.thumb + '\" checked />'
+							+ '<img src=\"' + p.thumb + '\" style=\"width:32px; height:32px; object-fit:contain; border-radius:3px; border:1px solid #ddd;\" />'
+							+ '<span style=\"flex:1;\">' + $('<span>').text(p.name).html() + '</span>'
+							+ '<span style=\"color:#666; font-size:12px;\">' + $('<span>').text(p.price).html() + '</span>'
+							+ '</label>';
+					});
+					$('#sijab_ai_results_list').html(html);
+					$('#sijab_ai_results').slideDown();
+				}).fail(function() {
+					spinner.removeClass('is-active');
+					btn.prop('disabled', false);
+					alert('Nätverksfel. Försök igen.');
+				});
+			});
+
+			// Add selected AI suggestions to sortable list
+			$('#sijab_ai_add_selected').on('click', function(){
+				$('.sijab-ai-check:checked').each(function(){
+					var id = $(this).val();
+					var name = $(this).data('name');
+					var thumb = $(this).data('thumb');
+					if (sortable.find('.sijab-acc-sortable-item[data-id=\"'+id+'\"]').length) return;
+					var li = '<li class=\"sijab-acc-sortable-item\" data-id=\"'+id+'\">'
+						+ '<input type=\"hidden\" name=\"sijab_accessories_ids[]\" value=\"'+id+'\" />'
+						+ '<span class=\"sijab-acc-drag-handle\" title=\"Dra f\\u00f6r att sortera\">\\u2630</span>'
+						+ '<img src=\"' + thumb + '\" />'
+						+ '<span class=\"sijab-acc-item-name\">' + name + '</span>'
+						+ '<a href=\"#\" class=\"sijab-acc-remove\" title=\"Ta bort\">Ta bort</a>'
+						+ '</li>';
+					sortable.append(li);
+				});
+				sortable.sortable('refresh');
+				$('#sijab_acc_empty_msg').hide();
+				$('#sijab_ai_results').slideUp();
+			});
+
+			// Dismiss AI results
+			$('#sijab_ai_dismiss').on('click', function(){
+				$('#sijab_ai_results').slideUp();
 			});
 		});
 		";
@@ -1307,6 +1400,126 @@ class SIJAB_Tillbehor {
 			'collage_id'        => $collage['id'] ?? 0,
 			'collage_url'       => $collage['url'] ?? '',
 			'collage_error'     => $collage['error'] ?? '',
+		] );
+	}
+
+	/**
+	 * AI: Suggest accessories for a product.
+	 */
+	public function ajax_suggest_accessories(): void {
+		check_ajax_referer( 'sijab_suggest_accessories', 'nonce' );
+		if ( ! current_user_can( 'edit_products' ) ) {
+			wp_send_json_error( 'Unauthorized' );
+		}
+
+		$product_id = absint( $_POST['product_id'] ?? 0 );
+		$product    = wc_get_product( $product_id );
+		if ( ! $product ) {
+			wp_send_json_error( 'Produkt hittades inte.' );
+		}
+
+		$api_key = get_option( 'sijab_openai_api_key', '' );
+		if ( empty( $api_key ) ) {
+			wp_send_json_error( 'Ingen OpenAI API-nyckel konfigurerad. Ange den under Tillbehör → API-inställningar.' );
+		}
+
+		// Build product context.
+		$prod_name = $product->get_name();
+		$prod_desc = mb_substr( wp_strip_all_tags( $product->get_description() ), 0, 500 );
+		$prod_cats = [];
+		$terms     = get_the_terms( $product_id, 'product_cat' );
+		if ( $terms && ! is_wp_error( $terms ) ) {
+			foreach ( $terms as $t ) $prod_cats[] = $t->name;
+		}
+		$cats_str = implode( ', ', $prod_cats );
+
+		// Get all product names in store for matching context.
+		$prompt = "Du är en expert på B2B-produkter och tillbehör. En kund säljer professionell utrustning.\n\n" .
+		          "Produkt: {$prod_name}\n" .
+		          ( $cats_str ? "Kategorier: {$cats_str}\n" : '' ) .
+		          ( $prod_desc ? "Beskrivning: {$prod_desc}\n" : '' ) .
+		          "\nFöreslå 5-10 typer av tillbehör som passar till denna produkt. " .
+		          "Svara med ett JSON-objekt med nyckeln \"keywords\" som innehåller en array av korta svenska sökord (1-3 ord per sökord). " .
+		          "Sökorden ska matcha typiska produktnamn i en webbutik. Var specifik, inte generisk.\n" .
+		          "Exempel: {\"keywords\": [\"pump\", \"slang\", \"adapter\", \"munstycke\"]}";
+
+		$response = wp_remote_post( 'https://api.openai.com/v1/chat/completions', [
+			'timeout' => 30,
+			'headers' => [
+				'Authorization' => 'Bearer ' . $api_key,
+				'Content-Type'  => 'application/json',
+			],
+			'body' => wp_json_encode( [
+				'model'           => 'gpt-4o',
+				'response_format' => [ 'type' => 'json_object' ],
+				'messages'        => [
+					[ 'role' => 'user', 'content' => $prompt ],
+				],
+				'max_tokens' => 300,
+			] ),
+		] );
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( $response->get_error_message() );
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( ! empty( $body['error'] ) ) {
+			wp_send_json_error( $body['error']['message'] ?? 'Fel från OpenAI.' );
+		}
+
+		$raw      = $body['choices'][0]['message']['content'] ?? '';
+		$content  = json_decode( $raw, true );
+		$keywords = $content['keywords'] ?? [];
+
+		if ( empty( $keywords ) || ! is_array( $keywords ) ) {
+			wp_send_json_error( 'AI:n kunde inte föreslå tillbehör.' );
+		}
+
+		// Search WooCommerce products matching the keywords.
+		$existing_ids = $this->get_accessory_ids( $product_id );
+		$found        = [];
+		$seen_ids     = array_flip( $existing_ids );
+		$seen_ids[ $product_id ] = true;
+
+		foreach ( $keywords as $kw ) {
+			$kw = sanitize_text_field( $kw );
+			if ( empty( $kw ) ) continue;
+
+			$query = new WP_Query( [
+				'post_type'      => 'product',
+				'post_status'    => 'publish',
+				's'              => $kw,
+				'posts_per_page' => 5,
+				'fields'         => 'ids',
+			] );
+
+			foreach ( $query->posts as $pid ) {
+				$pid = (int) $pid;
+				if ( isset( $seen_ids[ $pid ] ) ) continue;
+				$seen_ids[ $pid ] = true;
+
+				$p = wc_get_product( $pid );
+				if ( ! $p || ! $p->is_visible() ) continue;
+
+				$thumb_id  = $p->get_image_id();
+				$thumb_url = $thumb_id ? wp_get_attachment_image_url( $thumb_id, 'thumbnail' ) : wc_placeholder_img_src( 'thumbnail' );
+
+				$found[] = [
+					'id'       => $pid,
+					'name'     => $p->get_name(),
+					'sku'      => $p->get_sku(),
+					'price'    => strip_tags( $p->get_price_html() ),
+					'thumb'    => $thumb_url,
+					'keyword'  => $kw,
+				];
+			}
+			wp_reset_postdata();
+		}
+
+		wp_send_json_success( [
+			'keywords' => $keywords,
+			'products' => $found,
 		] );
 	}
 
