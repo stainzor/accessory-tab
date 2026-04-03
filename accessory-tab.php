@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.22.3
+ * Version: 2.22.4
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.22.3';
+	const VERSION       = '2.22.4';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -142,10 +142,15 @@ class SIJAB_Tillbehor {
 			'sanitize_callback' => 'sanitize_text_field',
 		] );
 
-		// OpenAI API key.
+		// OpenAI API key + model.
 		register_setting( 'sijab_tillbehor', 'sijab_openai_api_key', [
 			'type'              => 'string',
 			'sanitize_callback' => 'sanitize_text_field',
+		] );
+		register_setting( 'sijab_tillbehor', 'sijab_openai_model', [
+			'type'              => 'string',
+			'sanitize_callback' => 'sanitize_text_field',
+			'default'           => 'gpt-4o',
 		] );
 	}
 
@@ -192,6 +197,7 @@ class SIJAB_Tillbehor {
 		$s        = $this->get_settings();
 		$gh_token = get_option( 'sijab_tillbehor_github_token', '' );
 		$ai_key   = get_option( 'sijab_openai_api_key', '' );
+		$ai_model = get_option( 'sijab_openai_model', 'gpt-4o' );
 		?>
 		<div class="wrap">
 			<h1><?php esc_html_e( 'Accessory Tab — Tillbehör', 'sijab-tillbehor' ); ?></h1>
@@ -329,7 +335,31 @@ class SIJAB_Tillbehor {
 									<th scope="row" style="width:180px;"><label for="sijab_openai_key"><?php esc_html_e( 'API-nyckel', 'sijab-tillbehor' ); ?></label></th>
 									<td>
 										<input type="password" name="sijab_openai_api_key" id="sijab_openai_key" value="<?php echo esc_attr( $ai_key ); ?>" class="regular-text" autocomplete="off" />
-										<p class="description"><?php esc_html_e( 'Skapa nyckeln på platform.openai.com → API keys. Modell: gpt-4o.', 'sijab-tillbehor' ); ?></p>
+										<p class="description"><?php esc_html_e( 'Skapa nyckeln på platform.openai.com → API keys.', 'sijab-tillbehor' ); ?></p>
+									</td>
+								</tr>
+								<tr>
+									<th scope="row" style="width:180px;"><label for="sijab_openai_model"><?php esc_html_e( 'GPT-modell', 'sijab-tillbehor' ); ?></label></th>
+									<td>
+										<?php
+										$models = [
+											'gpt-4o'      => 'GPT-4o (rekommenderad)',
+											'gpt-4o-mini' => 'GPT-4o Mini (snabbare, billigare)',
+											'gpt-4-turbo' => 'GPT-4 Turbo',
+											'gpt-4'       => 'GPT-4',
+											'gpt-3.5-turbo' => 'GPT-3.5 Turbo (billigast)',
+											'o4-mini'     => 'o4-mini (reasoning)',
+											'o3'          => 'o3 (reasoning, dyrast)',
+										];
+										?>
+										<select name="sijab_openai_model" id="sijab_openai_model">
+											<?php foreach ( $models as $val => $label ) : ?>
+												<option value="<?php echo esc_attr( $val ); ?>" <?php selected( $ai_model, $val ); ?>>
+													<?php echo esc_html( $label ); ?>
+												</option>
+											<?php endforeach; ?>
+										</select>
+										<p class="description"><?php esc_html_e( 'Används för AI-förslag på tillbehör och paketgenerering.', 'sijab-tillbehor' ); ?></p>
 									</td>
 								</tr>
 							</table>
@@ -1479,7 +1509,7 @@ class SIJAB_Tillbehor {
 				'Content-Type'  => 'application/json',
 			],
 			'body' => wp_json_encode( [
-				'model'           => 'gpt-4o',
+				'model'           => get_option( 'sijab_openai_model', 'gpt-4o' ),
 				'response_format' => [ 'type' => 'json_object' ],
 				'messages'        => [
 					[ 'role' => 'user', 'content' => $prompt ],
@@ -1566,7 +1596,7 @@ class SIJAB_Tillbehor {
 				'Content-Type'  => 'application/json',
 			],
 			'body' => wp_json_encode( [
-				'model'           => 'gpt-4o',
+				'model'           => get_option( 'sijab_openai_model', 'gpt-4o' ),
 				'response_format' => [ 'type' => 'json_object' ],
 				'messages'        => [
 					[ 'role' => 'user', 'content' => $prompt ],
