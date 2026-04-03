@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.21.0
+ * Version: 2.22.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.21.0';
+	const VERSION       = '2.22.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -67,10 +67,18 @@ class SIJAB_Tillbehor {
 		add_action( 'admin_init', [ $this, 'register_settings' ] );
 		add_action( 'admin_init', [ $this, 'handle_migration' ] );
 
+		// AJAX: variable product add-to-cart from accessory card.
+		add_action( 'wp_ajax_sijab_add_to_cart', [ $this, 'ajax_add_to_cart' ] );
+		add_action( 'wp_ajax_nopriv_sijab_add_to_cart', [ $this, 'ajax_add_to_cart' ] );
+
 		// Stats: AJAX tracking + cleanup cron.
 		add_action( 'wp_ajax_sijab_acc_track', [ $this, 'ajax_track_event' ] );
 		add_action( 'wp_ajax_nopriv_sijab_acc_track', [ $this, 'ajax_track_event' ] );
 		add_action( 'sijab_acc_stats_cleanup', [ $this, 'cleanup_old_stats' ] );
+
+		// Shop: enable filtering/sorting bundles.
+		add_action( 'woocommerce_product_query', [ $this, 'handle_bundle_filter' ] );
+		add_filter( 'woocommerce_catalog_orderby', [ $this, 'add_bundle_sorting_option' ] );
 
 		// Order tracking: tag cart items added via accessory plugin.
 		add_filter( 'woocommerce_add_cart_item_data', [ $this, 'tag_cart_item' ], 10, 2 );
@@ -710,6 +718,13 @@ class SIJAB_Tillbehor {
 									</option>
 								<?php endforeach; ?>
 							</select>
+						</div>
+						<div class="sijab-acc-card__qty-row" style="margin-top:6px;">
+							<div class="sijab-acc-card__qty">
+								<button type="button" class="sijab-qty-btn sijab-qty-minus" aria-label="<?php esc_attr_e( 'Minska antal', 'sijab-tillbehor' ); ?>">−</button>
+								<input type="number" class="sijab-qty-input sijab-var-qty-input" value="1" min="1" step="1" aria-label="<?php esc_attr_e( 'Antal', 'sijab-tillbehor' ); ?>" />
+								<button type="button" class="sijab-qty-btn sijab-qty-plus" aria-label="<?php esc_attr_e( 'Öka antal', 'sijab-tillbehor' ); ?>">+</button>
+							</div>
 							<button type="button"
 							        class="button sijab-acc-atc-btn sijab-var-atc-btn"
 							        data-parent-id="<?php echo absint( $id ); ?>"
@@ -768,6 +783,7 @@ class SIJAB_Tillbehor {
 		wp_localize_script( 'sijab-tillbehor-frontend', 'sijabAccStats', [
 			'ajax_url'  => admin_url( 'admin-ajax.php' ),
 			'parent_id' => $product->get_id(),
+			'nonce'     => wp_create_nonce( 'sijab_add_to_cart' ),
 		] );
 	}
 
@@ -1674,8 +1690,12 @@ class SIJAB_Tillbehor {
 				<?php foreach ( $items as $item ) :
 					$p = wc_get_product( $item['product_id'] );
 					if ( ! $p ) continue;
-					$img  = $p->get_image_id() ? wp_get_attachment_image_url( $p->get_image_id(), 'woocommerce_thumbnail' ) : wc_placeholder_img_src( 'woocommerce_thumbnail' );
-					$link = get_permalink( $p->get_id() );
+					$img      = $p->get_image_id() ? wp_get_attachment_image_url( $p->get_image_id(), 'woocommerce_thumbnail' ) : wc_placeholder_img_src( 'woocommerce_thumbnail' );
+					$link     = get_permalink( $p->get_id() );
+					$qty_def  = absint( $item['qty_default'] ?? 1 );
+					$qty_min  = absint( $item['qty_min'] ?? 1 );
+					$qty_max  = absint( $item['qty_max'] ?? 0 );
+					$has_selector = ( $qty_max > 0 && $qty_min !== $qty_max );
 					?>
 					<div class="sijab-acc-item">
 						<div class="sijab-acc-card">
@@ -1692,7 +1712,22 @@ class SIJAB_Tillbehor {
 									</div>
 								<?php endif; ?>
 								<div class="sijab-acc-card__right sijab-bundle-qty-badge">
-									<span class="sijab-bundle-qty"><?php echo absint( $item['qty_default'] ); ?> <?php esc_html_e( 'st', 'sijab-tillbehor' ); ?></span>
+									<?php if ( $has_selector ) : ?>
+										<div class="sijab-acc-card__qty">
+											<button type="button" class="sijab-qty-btn sijab-qty-minus" aria-label="<?php esc_attr_e( 'Minska antal', 'sijab-tillbehor' ); ?>">−</button>
+											<input type="number" class="sijab-qty-input sijab-bundle-qty-input"
+											       value="<?php echo $qty_def; ?>"
+											       min="<?php echo $qty_min; ?>"
+											       max="<?php echo $qty_max; ?>"
+											       step="1"
+											       data-product-id="<?php echo absint( $p->get_id() ); ?>"
+											       aria-label="<?php esc_attr_e( 'Antal', 'sijab-tillbehor' ); ?>" />
+											<button type="button" class="sijab-qty-btn sijab-qty-plus" aria-label="<?php esc_attr_e( 'Öka antal', 'sijab-tillbehor' ); ?>">+</button>
+										</div>
+										<span class="sijab-bundle-qty-label"><?php esc_html_e( 'st', 'sijab-tillbehor' ); ?></span>
+									<?php else : ?>
+										<span class="sijab-bundle-qty"><?php echo $qty_def; ?> <?php esc_html_e( 'st', 'sijab-tillbehor' ); ?></span>
+									<?php endif; ?>
 								</div>
 							</div>
 						</div>
@@ -1701,6 +1736,101 @@ class SIJAB_Tillbehor {
 			</div>
 		</section>
 		<?php
+	}
+
+	// ──────────────────────────────────────────────────────────────
+	// Shop: Bundle filter/sorting
+	// ──────────────────────────────────────────────────────────────
+
+	/**
+	 * Add "Paket" sorting option to WooCommerce catalog orderby dropdown.
+	 */
+	public function add_bundle_sorting_option( array $options ): array {
+		$options['bundles_first'] = __( 'Paket först', 'sijab-tillbehor' );
+		return $options;
+	}
+
+	/**
+	 * Handle bundle filter/sorting in product query.
+	 */
+	public function handle_bundle_filter( $query ): void {
+		if ( is_admin() || ! $query->is_main_query() ) return;
+
+		$orderby = isset( $_GET['orderby'] ) ? sanitize_text_field( $_GET['orderby'] ) : '';
+
+		if ( 'bundles_first' === $orderby ) {
+			$query->set( 'meta_key', self::BUNDLE_FLAG );
+			$query->set( 'orderby', [ 'meta_value' => 'DESC', 'title' => 'ASC' ] );
+		}
+
+		// Also support ?bundle_only=1 to show only bundles.
+		if ( ! empty( $_GET['bundle_only'] ) ) {
+			$query->set( 'meta_query', array_merge(
+				$query->get( 'meta_query' ) ?: [],
+				[
+					[
+						'key'     => self::BUNDLE_FLAG,
+						'value'   => '1',
+						'compare' => '=',
+					],
+				]
+			) );
+		}
+	}
+
+	// ──────────────────────────────────────────────────────────────
+	// AJAX: Add to cart (variable products from accessory cards)
+	// ──────────────────────────────────────────────────────────────
+
+	/**
+	 * Custom AJAX add-to-cart handler for variable products displayed in accessory cards.
+	 * More reliable than WC's built-in wc-ajax=add_to_cart on single product pages.
+	 */
+	public function ajax_add_to_cart(): void {
+		$product_id   = absint( $_POST['product_id'] ?? 0 );
+		$variation_id = absint( $_POST['variation_id'] ?? 0 );
+		$quantity     = max( 1, absint( $_POST['quantity'] ?? 1 ) );
+
+		if ( ! $product_id ) {
+			wp_send_json_error( [ 'message' => __( 'Ogiltigt produkt-ID.', 'sijab-tillbehor' ) ] );
+		}
+
+		// Collect variation attributes.
+		$variations = [];
+		foreach ( $_POST as $key => $value ) {
+			if ( strpos( $key, 'attribute_' ) === 0 ) {
+				$variations[ sanitize_title( wp_unslash( $key ) ) ] = sanitize_text_field( wp_unslash( $value ) );
+			}
+		}
+
+		// Tag for order tracking.
+		if ( ! empty( $_POST['sijab_acc_parent'] ) ) {
+			$_REQUEST['sijab_acc_parent'] = absint( $_POST['sijab_acc_parent'] );
+		}
+
+		$cart_item_key = WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variations );
+
+		if ( $cart_item_key ) {
+			// Return updated cart fragments.
+			ob_start();
+			wc_print_notices();
+			$notices = ob_get_clean();
+
+			$data = [
+				'cart_hash'      => WC()->cart->get_cart_hash(),
+				'cart_item_key'  => $cart_item_key,
+				'fragments'      => apply_filters( 'woocommerce_add_to_cart_fragments', [] ),
+				'cart_quantity'  => WC()->cart->get_cart_contents_count(),
+			];
+
+			wp_send_json_success( $data );
+		} else {
+			// Get WC notices for error message.
+			$notices = wc_get_notices( 'error' );
+			wc_clear_notices();
+			$msg = ! empty( $notices ) ? wp_strip_all_tags( $notices[0]['notice'] ?? $notices[0] ) : __( 'Kunde inte lägga till i varukorgen.', 'sijab-tillbehor' );
+			wp_send_json_error( [ 'message' => $msg ] );
+		}
 	}
 
 	// ──────────────────────────────────────────────────────────────

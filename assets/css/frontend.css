@@ -508,9 +508,10 @@
 	}
 
 	.sijab-accessories-section--horizontal .sijab-acc-card__name {
-		white-space: normal;
-		overflow: visible;
-		text-overflow: unset;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 100%;
 	}
 
 	.sijab-accessories-section--horizontal .sijab-acc-card__meta {
@@ -668,4 +669,58 @@
 	color: #1a4a6b;
 	padding: 4px 14px;
 	white-space: nowrap;
+}
+
+.sijab-bundle-qty-badge .sijab-acc-card__qty {
+	display: inline-flex !important;
+}
+
+.sijab-bundle-qty-label {
+	font-size: 13px;
+	font-weight: 500;
+	color: #555;
+	margin-left: 4px;
+}
+
+/* Bundle section: product name truncation */
+.sijab-bundle-section .sijab-acc-card__name {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	display: block;
+	max-width: 100%;
+}
+
+/* ── Bundle + Accessories: mobile text truncation ── */
+@media (max-width: 600px) {
+	.sijab-bundle-section .sijab-acc-card {
+		flex-wrap: wrap;
+		gap: 10px;
+		padding: 12px;
+	}
+
+	.sijab-bundle-section .sijab-acc-card__body {
+		flex: 1;
+		min-width: 0;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+	}
+
+	.sijab-bundle-section .sijab-acc-card__name {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 100%;
+	}
+
+	.sijab-bundle-section .sijab-acc-card__right {
+		width: auto;
+		min-width: unset;
+	}
+
+	/* Variable product row on mobile */
+	.sijab-acc-card__right--variable .sijab-acc-card__qty-row {
+		flex-wrap: wrap;
+	}
 }
