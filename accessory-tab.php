@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.23.1
+ * Version: 2.23.2
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.23.1';
+	const VERSION       = '2.23.2';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -1984,10 +1984,15 @@ class SIJAB_Tillbehor {
 		$selected = isset( $_GET['product_type'] ) && $_GET['product_type'] === 'sijab_bundle' ? ' selected="selected"' : '';
 		$option   = '<option value="sijab_bundle"' . $selected . '>' . esc_html__( 'Paket', 'sijab-tillbehor' ) . '</option>';
 
-		// Only inject into the FIRST </select> (product type dropdown), not all of them.
-		$pos = strpos( $output, '</select>' );
-		if ( $pos !== false ) {
-			$output = substr_replace( $output, $option . '</select>', $pos, strlen( '</select>' ) );
+		// Find the product type <select> reliably by looking for value="simple"
+		// which ONLY exists in the product type dropdown (WooCommerce built-in types).
+		$marker_pos = strpos( $output, 'value="simple"' );
+		if ( $marker_pos !== false ) {
+			// Find the </select> that closes THIS select element.
+			$close_pos = strpos( $output, '</select>', $marker_pos );
+			if ( $close_pos !== false ) {
+				$output = substr_replace( $output, $option . '</select>', $close_pos, strlen( '</select>' ) );
+			}
 		}
 
 		return $output;
