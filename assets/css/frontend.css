@@ -48,6 +48,20 @@
 	margin-top: 12px;
 }
 
+.sijab-accessories-section__category-link {
+	text-align: right;
+	margin-top: 10px;
+}
+.sijab-accessories-section__category-link a {
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--primary-color, #1e73be) !important;
+	text-decoration: none !important;
+}
+.sijab-accessories-section__category-link a:hover {
+	text-decoration: underline !important;
+}
+
 .sijab-show-all-link {
 	font-size: 14px;
 	font-weight: 500;

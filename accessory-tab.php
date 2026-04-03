@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.17.1
+ * Version: 2.18.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.17.1';
+	const VERSION       = '2.18.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -564,6 +564,19 @@ class SIJAB_Tillbehor {
 					</a>
 				</div>
 			<?php endif; ?>
+			<?php
+			$cat_id = (int) get_post_meta( $product->get_id(), '_sijab_acc_category_id', true );
+			if ( $cat_id ) :
+				$cat = get_term( $cat_id, 'product_cat' );
+				if ( $cat && ! is_wp_error( $cat ) ) :
+					$cat_url = get_term_link( $cat, 'product_cat' );
+			?>
+				<div class="sijab-accessories-section__category-link">
+					<a href="<?php echo esc_url( $cat_url ); ?>">
+						<?php printf( esc_html__( 'Se alla %s →', 'sijab-tillbehor' ), esc_html( $cat->name ) ); ?>
+					</a>
+				</div>
+			<?php endif; endif; ?>
 		</section>
 		<?php
 	}
@@ -785,6 +798,28 @@ class SIJAB_Tillbehor {
 					<textarea id="sijab_accessories_skus" name="sijab_accessories_skus" rows="2" style="width:60%;" placeholder="EX123, EX456, EX789"></textarea>
 				</p>
 
+				<!-- Kategori-länk -->
+				<p class="form-field">
+					<label for="sijab_acc_category"><?php esc_html_e( 'Länka till tillbehörskategori', 'sijab-tillbehor' ); ?></label>
+					<?php
+					$saved_cat = (int) get_post_meta( $post->ID, '_sijab_acc_category_id', true );
+					$categories = get_terms( [
+						'taxonomy'   => 'product_cat',
+						'hide_empty' => false,
+						'orderby'    => 'name',
+					] );
+					?>
+					<select name="sijab_acc_category_id" id="sijab_acc_category" style="width:60%;">
+						<option value=""><?php esc_html_e( '— Ingen kategori —', 'sijab-tillbehor' ); ?></option>
+						<?php if ( ! is_wp_error( $categories ) ) : foreach ( $categories as $cat ) : ?>
+							<option value="<?php echo absint( $cat->term_id ); ?>" <?php selected( $saved_cat, $cat->term_id ); ?>>
+								<?php echo esc_html( $cat->name ); ?> (<?php echo absint( $cat->count ); ?>)
+							</option>
+						<?php endforeach; endif; ?>
+					</select>
+					<span class="description" style="display:block; margin-top:4px; margin-left:22%;"><?php esc_html_e( 'Visar en "Se alla tillbehör"-länk under tillbehörskorten.', 'sijab-tillbehor' ); ?></span>
+				</p>
+
 				<!-- Sortable lista -->
 				<div class="form-field" style="padding: 5px 20px 10px;">
 					<label style="display:block; margin-bottom:8px;"><?php esc_html_e( 'Tillbehör (dra för att ändra ordning)', 'sijab-tillbehor' ); ?></label>
@@ -841,6 +876,14 @@ class SIJAB_Tillbehor {
 			delete_post_meta( $product->get_id(), self::META_KEY );
 		} else {
 			update_post_meta( $product->get_id(), self::META_KEY, $ids );
+		}
+
+		// Save accessory category link.
+		$cat_id = absint( $_POST['sijab_acc_category_id'] ?? 0 );
+		if ( $cat_id && term_exists( $cat_id, 'product_cat' ) ) {
+			update_post_meta( $product->get_id(), '_sijab_acc_category_id', $cat_id );
+		} else {
+			delete_post_meta( $product->get_id(), '_sijab_acc_category_id' );
 		}
 	}
 
