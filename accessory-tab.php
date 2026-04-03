@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.20.0
+ * Version: 2.20.1
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.20.0';
+	const VERSION       = '2.20.1';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -837,7 +837,7 @@ class SIJAB_Tillbehor {
 							</option>
 						<?php endforeach; endif; ?>
 					</select>
-					<span class="description" style="display:block; margin-top:4px; margin-left:22%;"><?php esc_html_e( 'Visar en "Se alla tillbehör"-länk under tillbehörskorten.', 'sijab-tillbehor' ); ?></span>
+					<span class="description" style="display:block; margin-top:4px; margin-left:22%;"><?php esc_html_e( 'Visar en "Se alla tillbehör"-länk under tillbehörskorten. Välj kategori och klicka "Uppdatera" för att spara.', 'sijab-tillbehor' ); ?></span>
 				</p>
 
 				<!-- Sortable lista -->
@@ -1032,20 +1032,23 @@ class SIJAB_Tillbehor {
 						alert('Inga matchande produkter hittades i butiken.');
 						return;
 					}
-					var html = '';
+					var html = '<div style=\"max-height:400px; overflow-y:auto; border:1px solid #ddd; border-radius:4px; padding:8px; background:#f9f9f9;\">';
 					var currentKw = '';
 					products.forEach(function(p) {
 						if (p.keyword !== currentKw) {
 							currentKw = p.keyword;
-							html += '<p style=\"margin:8px 0 4px; font-size:12px; color:#666; text-transform:uppercase; letter-spacing:0.5px;\">' + $('<span>').text(currentKw).html() + '</p>';
+							html += '<div style=\"margin:8px 0 4px; padding:4px 0; font-size:11px; font-weight:600; color:#888; text-transform:uppercase; letter-spacing:0.5px; border-bottom:1px solid #eee;\">' + $('<span>').text(currentKw).html() + '</div>';
 						}
-						html += '<label style=\"display:flex; align-items:center; gap:8px; padding:6px 8px; border:1px solid #eee; border-radius:4px; margin-bottom:4px; background:#fff; cursor:pointer;\">'
-							+ '<input type=\"checkbox\" class=\"sijab-ai-check\" value=\"' + p.id + '\" data-name=\"' + $('<span>').text(p.name).html() + '\" data-thumb=\"' + p.thumb + '\" checked />'
-							+ '<img src=\"' + p.thumb + '\" style=\"width:32px; height:32px; object-fit:contain; border-radius:3px; border:1px solid #ddd;\" />'
-							+ '<span style=\"flex:1;\">' + $('<span>').text(p.name).html() + '</span>'
-							+ '<span style=\"color:#666; font-size:12px;\">' + $('<span>').text(p.price).html() + '</span>'
+						var safeName = $('<span>').text(p.name).html();
+						var safePrice = $('<span>').text(p.price).html();
+						html += '<label style=\"display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid #e0e0e0; border-radius:4px; margin-bottom:4px; background:#fff; cursor:pointer;\">'
+							+ '<input type=\"checkbox\" class=\"sijab-ai-check\" value=\"' + p.id + '\" data-name=\"' + safeName + '\" data-thumb=\"' + p.thumb + '\" checked style=\"flex-shrink:0;\" />'
+							+ '<img src=\"' + p.thumb + '\" style=\"width:40px; height:40px; object-fit:contain; border-radius:3px; border:1px solid #ddd; flex-shrink:0;\" />'
+							+ '<span style=\"flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px;\">' + safeName + '</span>'
+							+ '<span style=\"flex-shrink:0; color:#555; font-size:12px; white-space:nowrap; margin-left:8px;\">' + safePrice + '</span>'
 							+ '</label>';
 					});
+					html += '</div>';
 					$('#sijab_ai_results_list').html(html);
 					$('#sijab_ai_results').slideDown();
 				}).fail(function() {
@@ -1507,9 +1510,9 @@ class SIJAB_Tillbehor {
 
 				$found[] = [
 					'id'       => $pid,
-					'name'     => $p->get_name(),
+					'name'     => wp_strip_all_tags( $p->get_name() ),
 					'sku'      => $p->get_sku(),
-					'price'    => strip_tags( $p->get_price_html() ),
+					'price'    => wp_strip_all_tags( html_entity_decode( $p->get_price_html(), ENT_QUOTES, 'UTF-8' ) ),
 					'thumb'    => $thumb_url,
 					'keyword'  => $kw,
 				];
