@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.26.3
+ * Version: 2.27.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.26.3';
+	const VERSION       = '2.27.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -49,7 +49,6 @@ class SIJAB_Tillbehor {
 		add_action( 'woocommerce_product_data_panels', [ $this, 'render_admin_panel' ] );
 		add_action( 'woocommerce_admin_process_product_object', [ $this, 'save_product_accessories' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_admin_css' ] );
-		add_action( 'admin_notices', [ $this, 'show_debug_save_notice' ] );
 
 		// Admin: paketprodukter.
 		add_filter( 'woocommerce_product_data_tabs', [ $this, 'add_bundle_admin_tab' ] );
@@ -941,29 +940,9 @@ class SIJAB_Tillbehor {
 	}
 
 	public function save_product_accessories( $product ): void {
+		if ( ! isset( $_POST['sijab_accessories_nonce'] ) || ! wp_verify_nonce( $_POST['sijab_accessories_nonce'], 'sijab_save_accessories' ) ) return;
 		$pid = $product->get_id();
-
-		// DEBUG v2.26.2 — trace save on prod.
-		$debug = [
-			'product_id'    => $pid,
-			'time'          => current_time( 'mysql' ),
-			'hook'          => current_action(),
-			'nonce_present' => isset( $_POST['sijab_accessories_nonce'] ),
-			'nonce_valid'   => isset( $_POST['sijab_accessories_nonce'] ) ? (bool) wp_verify_nonce( $_POST['sijab_accessories_nonce'], 'sijab_save_accessories' ) : false,
-			'json_field'    => $_POST['sijab_accessories_json'] ?? 'NOT SET',
-			'meta_before'   => get_post_meta( $pid, self::META_KEY, true ),
-		];
-
-		if ( ! isset( $_POST['sijab_accessories_nonce'] ) || ! wp_verify_nonce( $_POST['sijab_accessories_nonce'], 'sijab_save_accessories' ) ) {
-			$debug['result'] = 'ABORTED — nonce';
-			set_transient( 'sijab_debug_save_' . $pid, $debug, 300 );
-			return;
-		}
-		if ( ! current_user_can( 'edit_product', $pid ) ) {
-			$debug['result'] = 'ABORTED — permission';
-			set_transient( 'sijab_debug_save_' . $pid, $debug, 300 );
-			return;
-		}
+		if ( ! current_user_can( 'edit_product', $pid ) ) return;
 
 		$ids = [];
 
@@ -990,20 +969,12 @@ class SIJAB_Tillbehor {
 
 		$ids = array_values( array_unique( array_diff( array_filter( array_map( 'absint', $ids ) ), [ $pid ] ) ) );
 
-		$debug['ids_to_save'] = $ids;
-
 		// Use WC_Product meta API so changes survive WC's own save().
 		if ( empty( $ids ) ) {
 			$product->delete_meta_data( self::META_KEY );
-			$debug['action'] = 'DELETED via product object';
 		} else {
 			$product->update_meta_data( self::META_KEY, $ids );
-			$debug['action'] = 'UPDATED via product object';
 		}
-
-		$debug['meta_after'] = $ids;
-		$debug['result'] = 'OK';
-		set_transient( 'sijab_debug_save_' . $pid, $debug, 300 );
 
 		// Save accessory category link.
 		$cat_id = absint( $_POST['sijab_acc_category_id'] ?? 0 );
@@ -1012,17 +983,6 @@ class SIJAB_Tillbehor {
 		} else {
 			$product->delete_meta_data( '_sijab_acc_category_id' );
 		}
-	}
-
-	public function show_debug_save_notice(): void {
-		$screen = get_current_screen();
-		if ( ! $screen || 'product' !== $screen->id ) return;
-		global $post;
-		if ( ! $post ) return;
-		$debug = get_transient( 'sijab_debug_save_' . $post->ID );
-		if ( ! $debug ) return;
-		delete_transient( 'sijab_debug_save_' . $post->ID );
-		echo '<div class="notice notice-info"><p><strong>SIJAB Debug v2.26.2:</strong></p><pre>' . esc_html( print_r( $debug, true ) ) . '</pre></div>';
 	}
 
 	public function enqueue_admin_css( $hook ): void {
