@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.26.0
+ * Version: 2.26.1
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.26.0';
+	const VERSION       = '2.26.1';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -47,7 +47,7 @@ class SIJAB_Tillbehor {
 		// Admin: produktredigerare — tillbehör.
 		add_filter( 'woocommerce_product_data_tabs', [ $this, 'add_admin_tab' ] );
 		add_action( 'woocommerce_product_data_panels', [ $this, 'render_admin_panel' ] );
-		add_action( 'woocommerce_admin_process_product_object', [ $this, 'save_product_accessories' ] );
+		add_action( 'woocommerce_process_product_meta', [ $this, 'save_product_accessories' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_admin_css' ] );
 
 		// Admin: paketprodukter.
@@ -939,9 +939,9 @@ class SIJAB_Tillbehor {
 		<?php
 	}
 
-	public function save_product_accessories( $product ): void {
+	public function save_product_accessories( $post_id ): void {
 		if ( ! isset( $_POST['sijab_accessories_nonce'] ) || ! wp_verify_nonce( $_POST['sijab_accessories_nonce'], 'sijab_save_accessories' ) ) return;
-		$pid = $product->get_id();
+		$pid = absint( $post_id );
 		if ( ! current_user_can( 'edit_product', $pid ) ) return;
 
 		$ids = [];
