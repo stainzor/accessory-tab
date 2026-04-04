@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.25.3
+ * Version: 2.25.4
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.25.3';
+	const VERSION       = '2.25.4';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -1414,17 +1414,10 @@ class SIJAB_Tillbehor {
 	// ──────────────────────────────────────────────────────────────
 
 	private function get_accessory_ids( $product_id ): array {
-		// Manuellt tillagda via Accessory Tab-admin.
 		$manual_ids = get_post_meta( $product_id, self::META_KEY, true );
 		if ( ! is_array( $manual_ids ) ) $manual_ids = [];
 
-		// Korsförsäljning via WooCommerce-metoden — fungerar för alla produkttyper inkl. variabla.
-		$product       = wc_get_product( $product_id );
-		$crosssell_ids = $product ? $product->get_cross_sell_ids() : [];
-
-		$ids = array_merge( $manual_ids, $crosssell_ids );
-
-		return array_values( array_unique( array_filter( array_map( 'absint', $ids ), function( $id ) {
+		return array_values( array_unique( array_filter( array_map( 'absint', $manual_ids ), function( $id ) {
 			return $id > 0;
 		} ) ) );
 	}
