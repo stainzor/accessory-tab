@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.26.1
+ * Version: 2.26.2
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.26.1';
+	const VERSION       = '2.26.2';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -49,6 +49,7 @@ class SIJAB_Tillbehor {
 		add_action( 'woocommerce_product_data_panels', [ $this, 'render_admin_panel' ] );
 		add_action( 'woocommerce_process_product_meta', [ $this, 'save_product_accessories' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_admin_css' ] );
+		add_action( 'admin_notices', [ $this, 'show_debug_save_notice' ] );
 
 		// Admin: paketprodukter.
 		add_filter( 'woocommerce_product_data_tabs', [ $this, 'add_bundle_admin_tab' ] );
@@ -940,9 +941,29 @@ class SIJAB_Tillbehor {
 	}
 
 	public function save_product_accessories( $post_id ): void {
-		if ( ! isset( $_POST['sijab_accessories_nonce'] ) || ! wp_verify_nonce( $_POST['sijab_accessories_nonce'], 'sijab_save_accessories' ) ) return;
 		$pid = absint( $post_id );
-		if ( ! current_user_can( 'edit_product', $pid ) ) return;
+
+		// DEBUG v2.26.2 — trace save on prod.
+		$debug = [
+			'product_id'    => $pid,
+			'time'          => current_time( 'mysql' ),
+			'hook'          => current_action(),
+			'nonce_present' => isset( $_POST['sijab_accessories_nonce'] ),
+			'nonce_valid'   => isset( $_POST['sijab_accessories_nonce'] ) ? (bool) wp_verify_nonce( $_POST['sijab_accessories_nonce'], 'sijab_save_accessories' ) : false,
+			'json_field'    => $_POST['sijab_accessories_json'] ?? 'NOT SET',
+			'meta_before'   => get_post_meta( $pid, self::META_KEY, true ),
+		];
+
+		if ( ! isset( $_POST['sijab_accessories_nonce'] ) || ! wp_verify_nonce( $_POST['sijab_accessories_nonce'], 'sijab_save_accessories' ) ) {
+			$debug['result'] = 'ABORTED — nonce';
+			set_transient( 'sijab_debug_save_' . $pid, $debug, 300 );
+			return;
+		}
+		if ( ! current_user_can( 'edit_product', $pid ) ) {
+			$debug['result'] = 'ABORTED — permission';
+			set_transient( 'sijab_debug_save_' . $pid, $debug, 300 );
+			return;
+		}
 
 		$ids = [];
 
@@ -969,11 +990,19 @@ class SIJAB_Tillbehor {
 
 		$ids = array_values( array_unique( array_diff( array_filter( array_map( 'absint', $ids ) ), [ $pid ] ) ) );
 
+		$debug['ids_to_save'] = $ids;
+
 		if ( empty( $ids ) ) {
 			delete_post_meta( $pid, self::META_KEY );
+			$debug['action'] = 'DELETED';
 		} else {
 			update_post_meta( $pid, self::META_KEY, $ids );
+			$debug['action'] = 'UPDATED';
 		}
+
+		$debug['meta_after'] = get_post_meta( $pid, self::META_KEY, true );
+		$debug['result'] = 'OK';
+		set_transient( 'sijab_debug_save_' . $pid, $debug, 300 );
 
 		// Save accessory category link.
 		$cat_id = absint( $_POST['sijab_acc_category_id'] ?? 0 );
@@ -982,6 +1011,17 @@ class SIJAB_Tillbehor {
 		} else {
 			delete_post_meta( $pid, '_sijab_acc_category_id' );
 		}
+	}
+
+	public function show_debug_save_notice(): void {
+		$screen = get_current_screen();
+		if ( ! $screen || 'product' !== $screen->id ) return;
+		global $post;
+		if ( ! $post ) return;
+		$debug = get_transient( 'sijab_debug_save_' . $post->ID );
+		if ( ! $debug ) return;
+		delete_transient( 'sijab_debug_save_' . $post->ID );
+		echo '<div class="notice notice-info"><p><strong>SIJAB Debug v2.26.2:</strong></p><pre>' . esc_html( print_r( $debug, true ) ) . '</pre></div>';
 	}
 
 	public function enqueue_admin_css( $hook ): void {
@@ -1423,6 +1463,8 @@ class SIJAB_Tillbehor {
 				});
 			});
 		});
+			// Safety: always sync JSON right before form submit.
+			$('#post').on('submit', function() { syncJson(); });
 		";
 		wp_add_inline_script( 'jquery-ui-sortable', $js );
 	}
