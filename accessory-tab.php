@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.27.2
+ * Version: 2.28.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.27.2';
+	const VERSION       = '2.28.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -60,6 +60,7 @@ class SIJAB_Tillbehor {
 		add_action( 'wp_ajax_sijab_suggest_accessories', [ $this, 'ajax_suggest_accessories' ] );
 		add_action( 'wp_ajax_sijab_save_acc_category', [ $this, 'ajax_save_acc_category' ] );
 		add_action( 'wp_ajax_sijab_get_product_prices', [ $this, 'ajax_get_product_prices' ] );
+		add_action( 'wp_ajax_sijab_bulk_set_accessories', [ $this, 'ajax_bulk_set_accessories' ] );
 
 		// Frontend: paketprodukter.
 		add_action( 'woocommerce_single_product_summary', [ $this, 'render_bundle_section' ], 35 );
@@ -386,6 +387,7 @@ class SIJAB_Tillbehor {
 			<!-- ── Flik: Verktyg (egen form för migrering) ── -->
 			<div id="sijab-tab-verktyg" class="sijab-tab-panel" style="display:none;">
 				<?php $this->render_migration_section(); ?>
+				<?php $this->render_bulk_accessories_section(); ?>
 			</div><!-- end Verktyg panel -->
 
 			<!-- ── Flik: Om ─────────────────────────── -->
@@ -538,6 +540,190 @@ class SIJAB_Tillbehor {
 		set_transient( 'sijab_migration_result', compact( 'total', 'updated', 'skipped', 'details' ), 60 );
 		wp_redirect( add_query_arg( [ 'page' => 'sijab-tillbehor', 'migrated' => '1' ], admin_url( 'admin.php' ) ) );
 		exit;
+	}
+
+	// ──────────────────────────────────────────────────────────────
+	// Verktyg — Masslägg tillbehör per kategori
+	// ──────────────────────────────────────────────────────────────
+
+	public function render_bulk_accessories_section(): void {
+		$categories = get_terms( [
+			'taxonomy'   => 'product_cat',
+			'hide_empty' => false,
+			'orderby'    => 'name',
+		] );
+		?>
+		<div style="margin-top:24px; background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:24px; max-width:700px;">
+			<h3 style="margin-top:0;"><?php esc_html_e( 'Masslägg tillbehör per kategori', 'sijab-tillbehor' ); ?></h3>
+			<p class="description"><?php esc_html_e( 'Välj en kategori och tillbehör nedan. Alla produkter i kategorin får dessa tillbehör. Befintliga tillbehör ersätts.', 'sijab-tillbehor' ); ?></p>
+			<?php wp_nonce_field( 'sijab_bulk_accessories', 'sijab_bulk_nonce' ); ?>
+
+			<table class="form-table" style="margin:0;">
+				<tr>
+					<th style="padding:12px 10px 12px 0; width:160px;"><label for="sijab_bulk_category"><?php esc_html_e( 'Kategori', 'sijab-tillbehor' ); ?></label></th>
+					<td style="padding:12px 0;">
+						<select id="sijab_bulk_category" style="width:100%; max-width:400px;">
+							<option value=""><?php esc_html_e( '— Välj kategori —', 'sijab-tillbehor' ); ?></option>
+							<?php if ( ! is_wp_error( $categories ) ) : foreach ( $categories as $cat ) : ?>
+								<option value="<?php echo absint( $cat->term_id ); ?>">
+									<?php echo esc_html( $cat->name ); ?> (<?php echo absint( $cat->count ); ?> produkter)
+								</option>
+							<?php endforeach; endif; ?>
+						</select>
+					</td>
+				</tr>
+				<tr>
+					<th style="padding:12px 10px 12px 0;"><label for="sijab_bulk_search"><?php esc_html_e( 'Tillbehör', 'sijab-tillbehor' ); ?></label></th>
+					<td style="padding:12px 0;">
+						<select class="wc-product-search" style="width:100%; max-width:400px;" id="sijab_bulk_search" data-placeholder="<?php esc_attr_e( 'Sök produkter…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="true"></select>
+						<button type="button" class="button" id="sijab_bulk_add_btn" style="vertical-align:middle; margin-top:4px;"><?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?></button>
+						<ul id="sijab_bulk_list" style="margin:10px 0 0; padding:0; list-style:none; border:1px solid #ddd; border-radius:6px; overflow:hidden; display:none;"></ul>
+						<p id="sijab_bulk_empty" style="color:#999; font-style:italic; margin:8px 0 0;"><?php esc_html_e( 'Inga tillbehör valda.', 'sijab-tillbehor' ); ?></p>
+					</td>
+				</tr>
+			</table>
+
+			<p style="margin-top:16px;">
+				<button type="button" class="button button-primary" id="sijab_bulk_apply_btn" disabled><?php esc_html_e( 'Applicera på alla produkter i kategorin', 'sijab-tillbehor' ); ?></button>
+				<span id="sijab_bulk_spinner" class="spinner" style="float:none; margin-top:0;"></span>
+			</p>
+			<div id="sijab_bulk_result" style="display:none; margin-top:12px; padding:10px 14px; border-radius:4px;"></div>
+		</div>
+
+		<script>
+		jQuery(function($) {
+			var bulkList = $('#sijab_bulk_list');
+			var bulkIds = [];
+
+			function updateBulkBtn() {
+				var hasCat = !!$('#sijab_bulk_category').val();
+				var hasItems = bulkIds.length > 0;
+				$('#sijab_bulk_apply_btn').prop('disabled', !hasCat || !hasItems);
+			}
+
+			$('#sijab_bulk_category').on('change', updateBulkBtn);
+
+			$('#sijab_bulk_add_btn').on('click', function() {
+				var sel = $('#sijab_bulk_search');
+				var id = sel.val();
+				if (!id) return;
+				if (bulkIds.indexOf(id) !== -1) {
+					alert('<?php echo esc_js( __( 'Denna produkt finns redan i listan.', 'sijab-tillbehor' ) ); ?>');
+					sel.val(null).trigger('change');
+					return;
+				}
+				var text = sel.find('option:selected').text();
+				bulkIds.push(id);
+				var li = '<li data-id="' + id + '" style="display:flex; align-items:center; justify-content:space-between; padding:8px 12px; border-bottom:1px solid #eee; background:#fff;">'
+					+ '<span>' + $('<span>').text(text).html() + '</span>'
+					+ '<a href="#" class="sijab-bulk-remove" style="color:#a00; text-decoration:none; font-size:12px;">Ta bort</a>'
+					+ '</li>';
+				bulkList.append(li).show();
+				$('#sijab_bulk_empty').hide();
+				sel.val(null).trigger('change');
+				updateBulkBtn();
+			});
+
+			$(document).on('click', '.sijab-bulk-remove', function(e) {
+				e.preventDefault();
+				var id = $(this).closest('li').data('id').toString();
+				bulkIds = bulkIds.filter(function(i) { return i !== id; });
+				$(this).closest('li').remove();
+				if (bulkIds.length === 0) {
+					bulkList.hide();
+					$('#sijab_bulk_empty').show();
+				}
+				updateBulkBtn();
+			});
+
+			$('#sijab_bulk_apply_btn').on('click', function() {
+				var btn = $(this);
+				var catId = $('#sijab_bulk_category').val();
+				if (!catId || bulkIds.length === 0) return;
+
+				var catName = $('#sijab_bulk_category option:selected').text();
+				if (!confirm('Alla produkter i "' + catName.trim() + '" får dessa ' + bulkIds.length + ' tillbehör. Befintliga tillbehör ersätts. Fortsätt?')) return;
+
+				btn.prop('disabled', true);
+				$('#sijab_bulk_spinner').addClass('is-active');
+				$('#sijab_bulk_result').hide();
+
+				$.post(ajaxurl, {
+					action: 'sijab_bulk_set_accessories',
+					nonce: $('#sijab_bulk_nonce').val(),
+					category_id: catId,
+					accessory_ids: JSON.stringify(bulkIds)
+				}, function(resp) {
+					$('#sijab_bulk_spinner').removeClass('is-active');
+					btn.prop('disabled', false);
+					updateBulkBtn();
+					var box = $('#sijab_bulk_result');
+					if (resp.success) {
+						box.css({background:'#ecf7ed', border:'1px solid #46b450', color:'#1e4620'})
+							.html('✓ ' + resp.data.updated + ' produkter uppdaterade.')
+							.show();
+					} else {
+						box.css({background:'#fbeaea', border:'1px solid #dc3232', color:'#8b0000'})
+							.html('✗ ' + (resp.data || 'Fel'))
+							.show();
+					}
+				}).fail(function() {
+					$('#sijab_bulk_spinner').removeClass('is-active');
+					btn.prop('disabled', false);
+					updateBulkBtn();
+					$('#sijab_bulk_result').css({background:'#fbeaea', border:'1px solid #dc3232', color:'#8b0000'})
+						.html('✗ Nätverksfel.').show();
+				});
+			});
+		});
+		</script>
+		<?php
+	}
+
+	public function ajax_bulk_set_accessories(): void {
+		check_ajax_referer( 'sijab_bulk_accessories', 'nonce' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( 'Unauthorized' );
+		}
+
+		$cat_id = absint( $_POST['category_id'] ?? 0 );
+		if ( ! $cat_id || ! term_exists( $cat_id, 'product_cat' ) ) {
+			wp_send_json_error( 'Ogiltig kategori.' );
+		}
+
+		$raw_ids = json_decode( wp_unslash( $_POST['accessory_ids'] ?? '[]' ), true );
+		if ( ! is_array( $raw_ids ) || empty( $raw_ids ) ) {
+			wp_send_json_error( 'Inga tillbehör valda.' );
+		}
+
+		$accessory_ids = array_values( array_unique( array_filter( array_map( 'absint', $raw_ids ) ) ) );
+
+		$query = new \WP_Query( [
+			'post_type'      => 'product',
+			'post_status'    => 'publish',
+			'posts_per_page' => -1,
+			'fields'         => 'ids',
+			'tax_query'      => [ [
+				'taxonomy' => 'product_cat',
+				'field'    => 'term_id',
+				'terms'    => $cat_id,
+			] ],
+		] );
+
+		$updated = 0;
+		foreach ( $query->posts as $product_id ) {
+			$product_id = absint( $product_id );
+			$ids = array_values( array_diff( $accessory_ids, [ $product_id ] ) );
+			if ( ! empty( $ids ) ) {
+				update_post_meta( $product_id, self::META_KEY, $ids );
+			} else {
+				delete_post_meta( $product_id, self::META_KEY );
+			}
+			$updated++;
+		}
+
+		wp_send_json_success( [ 'updated' => $updated ] );
 	}
 
 	// ──────────────────────────────────────────────────────────────
