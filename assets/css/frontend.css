@@ -632,6 +632,12 @@
 	cursor: pointer;
 	outline: none !important;
 	box-shadow: none !important;
+	box-sizing: border-box !important;
+}
+
+.sijab-acc-card__var-row {
+	max-width: 100%;
+	overflow: hidden;
 }
 
 .sijab-var-select:focus {
@@ -647,6 +653,12 @@
 @media (max-width: 600px) {
 	.sijab-var-select {
 		max-width: 100% !important;
+		box-sizing: border-box !important;
+	}
+
+	.sijab-acc-card__var-row {
+		width: 100%;
+		overflow: hidden;
 	}
 }
 
