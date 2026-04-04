@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.26.2
+ * Version: 2.26.3
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.26.2';
+	const VERSION       = '2.26.3';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -47,7 +47,7 @@ class SIJAB_Tillbehor {
 		// Admin: produktredigerare — tillbehör.
 		add_filter( 'woocommerce_product_data_tabs', [ $this, 'add_admin_tab' ] );
 		add_action( 'woocommerce_product_data_panels', [ $this, 'render_admin_panel' ] );
-		add_action( 'woocommerce_process_product_meta', [ $this, 'save_product_accessories' ] );
+		add_action( 'woocommerce_admin_process_product_object', [ $this, 'save_product_accessories' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_admin_css' ] );
 		add_action( 'admin_notices', [ $this, 'show_debug_save_notice' ] );
 
@@ -940,8 +940,8 @@ class SIJAB_Tillbehor {
 		<?php
 	}
 
-	public function save_product_accessories( $post_id ): void {
-		$pid = absint( $post_id );
+	public function save_product_accessories( $product ): void {
+		$pid = $product->get_id();
 
 		// DEBUG v2.26.2 — trace save on prod.
 		$debug = [
@@ -992,24 +992,25 @@ class SIJAB_Tillbehor {
 
 		$debug['ids_to_save'] = $ids;
 
+		// Use WC_Product meta API so changes survive WC's own save().
 		if ( empty( $ids ) ) {
-			delete_post_meta( $pid, self::META_KEY );
-			$debug['action'] = 'DELETED';
+			$product->delete_meta_data( self::META_KEY );
+			$debug['action'] = 'DELETED via product object';
 		} else {
-			update_post_meta( $pid, self::META_KEY, $ids );
-			$debug['action'] = 'UPDATED';
+			$product->update_meta_data( self::META_KEY, $ids );
+			$debug['action'] = 'UPDATED via product object';
 		}
 
-		$debug['meta_after'] = get_post_meta( $pid, self::META_KEY, true );
+		$debug['meta_after'] = $ids;
 		$debug['result'] = 'OK';
 		set_transient( 'sijab_debug_save_' . $pid, $debug, 300 );
 
 		// Save accessory category link.
 		$cat_id = absint( $_POST['sijab_acc_category_id'] ?? 0 );
 		if ( $cat_id && term_exists( $cat_id, 'product_cat' ) ) {
-			update_post_meta( $pid, '_sijab_acc_category_id', $cat_id );
+			$product->update_meta_data( '_sijab_acc_category_id', $cat_id );
 		} else {
-			delete_post_meta( $pid, '_sijab_acc_category_id' );
+			$product->delete_meta_data( '_sijab_acc_category_id' );
 		}
 	}
 
