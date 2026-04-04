@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.27.1
+ * Version: 2.27.2
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.27.1';
+	const VERSION       = '2.27.2';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -925,7 +925,7 @@ class SIJAB_Tillbehor {
 								<li class="sijab-acc-sortable-item" data-id="<?php echo absint( $pid ); ?>">
 									<span class="sijab-acc-drag-handle" title="<?php esc_attr_e( 'Dra för att sortera', 'sijab-tillbehor' ); ?>">☰</span>
 									<img src="<?php echo esc_url( $thumb ); ?>" width="32" height="32" style="object-fit:contain; vertical-align:middle; margin-right:8px; border-radius:3px; border:1px solid #ddd;" />
-									<span class="sijab-acc-item-name"><?php echo esc_html( wp_strip_all_tags( $p->get_formatted_name() ) ); ?></span>
+									<span class="sijab-acc-item-name"><?php echo esc_html( html_entity_decode( wp_strip_all_tags( $p->get_formatted_name() ) ) ); ?></span>
 									<a href="#" class="sijab-acc-remove" title="<?php esc_attr_e( 'Ta bort', 'sijab-tillbehor' ); ?>">Ta bort</a>
 								</li>
 								<?php
@@ -1438,7 +1438,12 @@ class SIJAB_Tillbehor {
 		$manual_ids = get_post_meta( $product_id, self::META_KEY, true );
 		if ( ! is_array( $manual_ids ) ) $manual_ids = [];
 
-		return array_values( array_unique( array_filter( array_map( 'absint', $manual_ids ), function( $id ) {
+		$product       = wc_get_product( $product_id );
+		$crosssell_ids = $product ? $product->get_cross_sell_ids() : [];
+
+		$ids = array_merge( $manual_ids, $crosssell_ids );
+
+		return array_values( array_unique( array_filter( array_map( 'absint', $ids ), function( $id ) {
 			return $id > 0;
 		} ) ) );
 	}
