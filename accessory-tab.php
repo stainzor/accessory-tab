@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.25.5
+ * Version: 2.26.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.25.5';
+	const VERSION       = '2.26.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -49,7 +49,6 @@ class SIJAB_Tillbehor {
 		add_action( 'woocommerce_product_data_panels', [ $this, 'render_admin_panel' ] );
 		add_action( 'woocommerce_admin_process_product_object', [ $this, 'save_product_accessories' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_admin_css' ] );
-		add_action( 'admin_notices', [ $this, 'show_debug_save_notice' ] );
 
 		// Admin: paketprodukter.
 		add_filter( 'woocommerce_product_data_tabs', [ $this, 'add_bundle_admin_tab' ] );
@@ -915,6 +914,7 @@ class SIJAB_Tillbehor {
 				<!-- Sortable lista -->
 				<div class="form-field" style="padding: 5px 20px 10px;">
 					<label style="display:block; margin-bottom:8px;"><?php esc_html_e( 'Tillbehör (dra för att ändra ordning)', 'sijab-tillbehor' ); ?></label>
+					<input type="hidden" id="sijab_acc_json" name="sijab_accessories_json" value="<?php echo esc_attr( wp_json_encode( array_values( array_map( 'absint', $saved_ids ) ) ) ); ?>" />
 					<ul id="sijab_acc_sortable" style="margin:0; padding:0; list-style:none;">
 						<?php if ( ! empty( $saved_ids ) ) :
 							foreach ( $saved_ids as $pid ) :
@@ -923,7 +923,6 @@ class SIJAB_Tillbehor {
 								$thumb = $p->get_image_id() ? wp_get_attachment_image_url( $p->get_image_id(), 'thumbnail' ) : wc_placeholder_img_src( 'thumbnail' );
 								?>
 								<li class="sijab-acc-sortable-item" data-id="<?php echo absint( $pid ); ?>">
-									<input type="hidden" name="sijab_accessories_ids[]" value="<?php echo absint( $pid ); ?>" />
 									<span class="sijab-acc-drag-handle" title="<?php esc_attr_e( 'Dra för att sortera', 'sijab-tillbehor' ); ?>">☰</span>
 									<img src="<?php echo esc_url( $thumb ); ?>" width="32" height="32" style="object-fit:contain; vertical-align:middle; margin-right:8px; border-radius:3px; border:1px solid #ddd;" />
 									<span class="sijab-acc-item-name"><?php echo esc_html( wp_strip_all_tags( $p->get_formatted_name() ) ); ?></span>
@@ -941,60 +940,40 @@ class SIJAB_Tillbehor {
 	}
 
 	public function save_product_accessories( $product ): void {
+		if ( ! isset( $_POST['sijab_accessories_nonce'] ) || ! wp_verify_nonce( $_POST['sijab_accessories_nonce'], 'sijab_save_accessories' ) ) return;
 		$pid = $product->get_id();
-
-		// DEBUG — temporary admin notice to trace save behavior.
-		$debug = [ 'product_id' => $pid, 'time' => current_time( 'mysql' ) ];
-		$debug['nonce_present'] = isset( $_POST['sijab_accessories_nonce'] );
-		$debug['nonce_valid']   = $debug['nonce_present'] ? wp_verify_nonce( $_POST['sijab_accessories_nonce'], 'sijab_save_accessories' ) : false;
-		$debug['post_ids_raw']  = $_POST['sijab_accessories_ids'] ?? 'NOT SET';
-		$debug['post_skus_raw'] = $_POST['sijab_accessories_skus'] ?? 'NOT SET';
-		$debug['meta_before']   = get_post_meta( $pid, self::META_KEY, true );
-
-		if ( ! isset( $_POST['sijab_accessories_nonce'] ) || ! wp_verify_nonce( $_POST['sijab_accessories_nonce'], 'sijab_save_accessories' ) ) {
-			$debug['result'] = 'ABORTED — nonce check failed';
-			set_transient( 'sijab_debug_save_' . $pid, $debug, 300 );
-			return;
-		}
-		if ( ! current_user_can( 'edit_product', $pid ) ) {
-			$debug['result'] = 'ABORTED — permission check failed';
-			set_transient( 'sijab_debug_save_' . $pid, $debug, 300 );
-			return;
-		}
+		if ( ! current_user_can( 'edit_product', $pid ) ) return;
 
 		$ids = [];
 
-		if ( isset( $_POST['sijab_accessories_ids'] ) && is_array( $_POST['sijab_accessories_ids'] ) ) {
-			foreach ( $_POST['sijab_accessories_ids'] as $raw_id ) {
-				$id = absint( $raw_id );
-				if ( $id > 0 && wc_get_product( $id ) ) $ids[] = $id;
+		// Primary source: single JSON field (immune to duplicate hidden inputs).
+		if ( isset( $_POST['sijab_accessories_json'] ) ) {
+			$json_ids = json_decode( wp_unslash( $_POST['sijab_accessories_json'] ), true );
+			if ( is_array( $json_ids ) ) {
+				foreach ( $json_ids as $raw_id ) {
+					$id = absint( $raw_id );
+					if ( $id > 0 ) $ids[] = $id;
+				}
 			}
 		}
 
+		// Also accept SKUs from the textarea.
 		if ( ! empty( $_POST['sijab_accessories_skus'] ) ) {
 			$sku_str = sanitize_text_field( wp_unslash( $_POST['sijab_accessories_skus'] ) );
 			$sku_arr = array_filter( array_map( 'trim', explode( ',', $sku_str ) ) );
 			foreach ( $sku_arr as $sku ) {
 				$pid_sku = wc_get_product_id_by_sku( $sku );
-				if ( $pid_sku && wc_get_product( $pid_sku ) ) $ids[] = absint( $pid_sku );
+				if ( $pid_sku ) $ids[] = absint( $pid_sku );
 			}
 		}
 
 		$ids = array_values( array_unique( array_diff( array_filter( array_map( 'absint', $ids ) ), [ $pid ] ) ) );
 
-		$debug['ids_to_save'] = $ids;
-
 		if ( empty( $ids ) ) {
 			delete_post_meta( $pid, self::META_KEY );
-			$debug['action'] = 'DELETED meta';
 		} else {
 			update_post_meta( $pid, self::META_KEY, $ids );
-			$debug['action'] = 'UPDATED meta';
 		}
-
-		$debug['meta_after'] = get_post_meta( $pid, self::META_KEY, true );
-		$debug['result']     = 'OK';
-		set_transient( 'sijab_debug_save_' . $pid, $debug, 300 );
 
 		// Save accessory category link.
 		$cat_id = absint( $_POST['sijab_acc_category_id'] ?? 0 );
@@ -1003,17 +982,6 @@ class SIJAB_Tillbehor {
 		} else {
 			delete_post_meta( $pid, '_sijab_acc_category_id' );
 		}
-	}
-
-	public function show_debug_save_notice(): void {
-		$screen = get_current_screen();
-		if ( ! $screen || 'product' !== $screen->id ) return;
-		global $post;
-		if ( ! $post ) return;
-		$debug = get_transient( 'sijab_debug_save_' . $post->ID );
-		if ( ! $debug ) return;
-		delete_transient( 'sijab_debug_save_' . $post->ID );
-		echo '<div class="notice notice-info"><p><strong>SIJAB Tillbehör DEBUG (temporary):</strong></p><pre>' . esc_html( print_r( $debug, true ) ) . '</pre></div>';
 	}
 
 	public function enqueue_admin_css( $hook ): void {
@@ -1290,6 +1258,16 @@ class SIJAB_Tillbehor {
 		$js = "
 		jQuery(function($){
 			var sortable = $('#sijab_acc_sortable');
+			var jsonField = $('#sijab_acc_json');
+
+			// Sync sortable list to single JSON hidden field.
+			function syncJson() {
+				var ids = [];
+				sortable.find('.sijab-acc-sortable-item').each(function(){
+					ids.push( parseInt($(this).attr('data-id'), 10) );
+				});
+				jsonField.val( JSON.stringify(ids) );
+			}
 
 			// Make list sortable
 			sortable.sortable({
@@ -1302,7 +1280,8 @@ class SIJAB_Tillbehor {
 				forcePlaceholderSize: true,
 				start: function(e, ui) {
 					ui.placeholder.height(ui.item.outerHeight());
-				}
+				},
+				update: function() { syncJson(); }
 			});
 
 			// Add from search
@@ -1317,7 +1296,6 @@ class SIJAB_Tillbehor {
 				}
 				var text = sel.find('option:selected').text();
 				var li = '<li class=\"sijab-acc-sortable-item\" data-id=\"'+id+'\">'
-					+ '<input type=\"hidden\" name=\"sijab_accessories_ids[]\" value=\"'+id+'\" />'
 					+ '<span class=\"sijab-acc-drag-handle\" title=\"Dra f\\u00f6r att sortera\">\\u2630</span>'
 					+ '<img src=\"" . esc_js( wc_placeholder_img_src( 'thumbnail' ) ) . "\" />'
 					+ '<span class=\"sijab-acc-item-name\">' + $('<span>').text(text).html() + '</span>'
@@ -1325,6 +1303,7 @@ class SIJAB_Tillbehor {
 					+ '</li>';
 				sortable.append(li);
 				sortable.sortable('refresh');
+				syncJson();
 				$('#sijab_acc_empty_msg').hide();
 				sel.val(null).trigger('change');
 			});
@@ -1335,6 +1314,7 @@ class SIJAB_Tillbehor {
 				$(this).closest('.sijab-acc-sortable-item').slideUp(200, function(){
 					$(this).remove();
 					sortable.sortable('refresh');
+					syncJson();
 					if (sortable.find('.sijab-acc-sortable-item').length === 0) {
 						$('#sijab_acc_empty_msg').show();
 					}
@@ -1399,7 +1379,6 @@ class SIJAB_Tillbehor {
 					var thumb = $(this).data('thumb');
 					if (sortable.find('.sijab-acc-sortable-item[data-id=\"'+id+'\"]').length) return;
 					var li = '<li class=\"sijab-acc-sortable-item\" data-id=\"'+id+'\">'
-						+ '<input type=\"hidden\" name=\"sijab_accessories_ids[]\" value=\"'+id+'\" />'
 						+ '<span class=\"sijab-acc-drag-handle\" title=\"Dra f\\u00f6r att sortera\">\\u2630</span>'
 						+ '<img src=\"' + thumb + '\" />'
 						+ '<span class=\"sijab-acc-item-name\">' + name + '</span>'
@@ -1408,6 +1387,7 @@ class SIJAB_Tillbehor {
 					sortable.append(li);
 				});
 				sortable.sortable('refresh');
+				syncJson();
 				$('#sijab_acc_empty_msg').hide();
 				$('#sijab_ai_results').slideUp();
 			});

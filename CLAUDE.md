@@ -3,7 +3,7 @@
 ## Overview
 WooCommerce plugin that displays product accessories on the single product page with a professional, Dustin.se-inspired card design. Blue buttons, pill-shaped qty selectors, light blue section background.
 
-- **Current version:** 2.25.4
+- **Current version:** 2.26.0
 - **GitHub repo:** `stainzor/accessory-tab` (private)
 - **Test server:** test.sijab.com
 - **Test product:** https://test.sijab.com/shop/adblue/adblue-1000-liter-ibc/
