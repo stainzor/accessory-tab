@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.29.5
+ * Version: 2.29.6
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.29.5';
+	const VERSION       = '2.29.6';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -2991,39 +2991,86 @@ class SIJAB_Tillbehor {
 		// Prevent double-firing if both hooks trigger for the same order.
 		if ( $order->get_meta( '_sijab_bundle_components_added' ) ) return;
 
-		$added = false;
+		// 1. Collect existing items data and build ordered list with components after parents.
+		$ordered = [];
+		$has_bundles = false;
 
-		foreach ( $order->get_items() as $item ) {
-			$product_id = $item->get_product_id();
+		foreach ( $order->get_items() as $item_id => $item ) {
+			// Snapshot existing item data.
+			$ordered[] = [
+				'type'         => 'existing',
+				'product_id'   => $item->get_product_id(),
+				'variation_id' => $item->get_variation_id(),
+				'name'         => $item->get_name(),
+				'quantity'     => $item->get_quantity(),
+				'subtotal'     => $item->get_subtotal(),
+				'total'        => $item->get_total(),
+				'tax_class'    => $item->get_tax_class(),
+				'taxes'        => $item->get_taxes(),
+				'meta'         => $item->get_meta_data(),
+			];
+
+			$product_id  = $item->get_product_id();
 			if ( ! get_post_meta( $product_id, self::BUNDLE_FLAG, true ) ) continue;
 
 			$bundle_items = $this->get_bundle_items( $product_id );
 			if ( empty( $bundle_items ) ) continue;
 
-			$parent_qty = $item->get_quantity();
+			$has_bundles = true;
+			$parent_qty  = $item->get_quantity();
 
 			foreach ( $bundle_items as $bi ) {
 				$component = wc_get_product( $bi['product_id'] );
 				if ( ! $component ) continue;
 
 				$qty = absint( $bi['qty_default'] ?? 1 ) * $parent_qty;
-
-				$line = new \WC_Order_Item_Product();
-				$line->set_product( $component );
-				$line->set_name( '↳ ' . $component->get_name() );
-				$line->set_quantity( $qty );
-				$line->set_subtotal( 0 );
-				$line->set_total( 0 );
-				$line->add_meta_data( '_sijab_bundled_by', $product_id, true );
-				$order->add_item( $line );
-				$added = true;
+				$ordered[] = [
+					'type'       => 'component',
+					'product'    => $component,
+					'qty'        => $qty,
+					'bundled_by' => $product_id,
+				];
 			}
 		}
 
-		if ( $added ) {
-			$order->update_meta_data( '_sijab_bundle_components_added', '1' );
-			$order->save();
+		if ( ! $has_bundles ) return;
+
+		// 2. Remove all existing line items.
+		foreach ( $order->get_items() as $item_id => $item ) {
+			$order->remove_item( $item_id );
 		}
+		$order->save();
+
+		// 3. Re-add in correct order: parent → components → next item → …
+		foreach ( $ordered as $data ) {
+			$line = new \WC_Order_Item_Product();
+
+			if ( $data['type'] === 'existing' ) {
+				$line->set_product_id( $data['product_id'] );
+				$line->set_variation_id( $data['variation_id'] );
+				$line->set_name( $data['name'] );
+				$line->set_quantity( $data['quantity'] );
+				$line->set_subtotal( $data['subtotal'] );
+				$line->set_total( $data['total'] );
+				$line->set_tax_class( $data['tax_class'] );
+				$line->set_taxes( $data['taxes'] );
+				foreach ( $data['meta'] as $meta ) {
+					$line->add_meta_data( $meta->key, $meta->value, true );
+				}
+			} else {
+				$line->set_product( $data['product'] );
+				$line->set_name( '↳ ' . $data['product']->get_name() );
+				$line->set_quantity( $data['qty'] );
+				$line->set_subtotal( 0 );
+				$line->set_total( 0 );
+				$line->add_meta_data( '_sijab_bundled_by', $data['bundled_by'], true );
+			}
+
+			$order->add_item( $line );
+		}
+
+		$order->update_meta_data( '_sijab_bundle_components_added', '1' );
+		$order->save();
 	}
 }
 
