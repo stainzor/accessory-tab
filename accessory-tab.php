@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.29.6
+ * Version: 2.29.7
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.29.6';
+	const VERSION       = '2.29.7';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -97,6 +97,9 @@ class SIJAB_Tillbehor {
 		// Bundle → order: add component line items so ERP (Sharespine/Visma) sees every SKU.
 		add_action( 'woocommerce_checkout_order_created', [ $this, 'add_bundle_component_lines' ], 10, 1 );
 		add_action( 'woocommerce_store_api_checkout_order_processed', [ $this, 'add_bundle_component_lines' ], 10, 1 );
+
+		// Prevent stock reduction for bundle component lines (return qty 0).
+		add_filter( 'woocommerce_order_item_quantity', [ $this, 'zero_component_stock_qty' ], 10, 3 );
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -2986,6 +2989,17 @@ class SIJAB_Tillbehor {
 	// Bundle → Order: add component products as line items (0 kr)
 	// so ERP integrations (Sharespine/Visma) see every SKU.
 	// ──────────────────────────────────────────────────────────────
+
+	/**
+	 * Return 0 for bundle component items so WooCommerce does not
+	 * reduce stock for them (stock is managed on the parent product).
+	 */
+	public function zero_component_stock_qty( $qty, $order, $item ) {
+		if ( $item->get_meta( '_sijab_bundled_by' ) ) {
+			return 0;
+		}
+		return $qty;
+	}
 
 	public function add_bundle_component_lines( $order ): void {
 		// Prevent double-firing if both hooks trigger for the same order.
