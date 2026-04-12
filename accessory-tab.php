@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.29.7
+ * Version: 2.29.8
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.29.7';
+	const VERSION       = '2.29.8';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -94,9 +94,10 @@ class SIJAB_Tillbehor {
 		add_action( 'woocommerce_order_status_completed', [ $this, 'record_accessory_purchases' ] );
 		add_action( 'woocommerce_order_status_processing', [ $this, 'record_accessory_purchases' ] );
 
-		// Bundle → order: add component line items so ERP (Sharespine/Visma) sees every SKU.
-		add_action( 'woocommerce_checkout_order_created', [ $this, 'add_bundle_component_lines' ], 10, 1 );
-		add_action( 'woocommerce_store_api_checkout_order_processed', [ $this, 'add_bundle_component_lines' ], 10, 1 );
+		// Bundle → order: add component line items AFTER payment so Svea Checkout is not disrupted.
+		add_action( 'woocommerce_order_status_processing', [ $this, 'add_bundle_component_lines' ], 5, 1 );
+		add_action( 'woocommerce_order_status_completed', [ $this, 'add_bundle_component_lines' ], 5, 1 );
+		add_action( 'woocommerce_payment_complete', [ $this, 'add_bundle_component_lines' ], 10, 1 );
 
 		// Prevent stock reduction for bundle component lines (return qty 0).
 		add_filter( 'woocommerce_order_item_quantity', [ $this, 'zero_component_stock_qty' ], 10, 3 );
@@ -3001,16 +3002,18 @@ class SIJAB_Tillbehor {
 		return $qty;
 	}
 
-	public function add_bundle_component_lines( $order ): void {
-		// Prevent double-firing if both hooks trigger for the same order.
+	public function add_bundle_component_lines( $order_id ): void {
+		$order = wc_get_order( $order_id );
+		if ( ! $order ) return;
+
+		// Prevent double-firing if multiple hooks trigger for the same order.
 		if ( $order->get_meta( '_sijab_bundle_components_added' ) ) return;
 
-		// 1. Collect existing items data and build ordered list with components after parents.
+		// 1. Collect existing items and build ordered list with components after parents.
 		$ordered = [];
 		$has_bundles = false;
 
 		foreach ( $order->get_items() as $item_id => $item ) {
-			// Snapshot existing item data.
 			$ordered[] = [
 				'type'         => 'existing',
 				'product_id'   => $item->get_product_id(),
@@ -3024,7 +3027,7 @@ class SIJAB_Tillbehor {
 				'meta'         => $item->get_meta_data(),
 			];
 
-			$product_id  = $item->get_product_id();
+			$product_id = $item->get_product_id();
 			if ( ! get_post_meta( $product_id, self::BUNDLE_FLAG, true ) ) continue;
 
 			$bundle_items = $this->get_bundle_items( $product_id );
