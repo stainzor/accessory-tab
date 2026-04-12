@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.29.4
+ * Version: 2.29.5
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.29.4';
+	const VERSION       = '2.29.5';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -95,7 +95,8 @@ class SIJAB_Tillbehor {
 		add_action( 'woocommerce_order_status_processing', [ $this, 'record_accessory_purchases' ] );
 
 		// Bundle → order: add component line items so ERP (Sharespine/Visma) sees every SKU.
-		add_action( 'woocommerce_checkout_create_order_line_item', [ $this, 'add_bundle_component_lines' ], 20, 4 );
+		add_action( 'woocommerce_checkout_order_created', [ $this, 'add_bundle_component_lines' ], 10, 1 );
+		add_action( 'woocommerce_store_api_checkout_order_processed', [ $this, 'add_bundle_component_lines' ], 10, 1 );
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -2986,29 +2987,42 @@ class SIJAB_Tillbehor {
 	// so ERP integrations (Sharespine/Visma) see every SKU.
 	// ──────────────────────────────────────────────────────────────
 
-	public function add_bundle_component_lines( $item, $cart_item_key, $values, $order ): void {
-		$product_id = $values['product_id'];
-		if ( ! get_post_meta( $product_id, self::BUNDLE_FLAG, true ) ) return;
+	public function add_bundle_component_lines( $order ): void {
+		// Prevent double-firing if both hooks trigger for the same order.
+		if ( $order->get_meta( '_sijab_bundle_components_added' ) ) return;
 
-		$bundle_items = $this->get_bundle_items( $product_id );
-		if ( empty( $bundle_items ) ) return;
+		$added = false;
 
-		$parent_qty = $values['quantity'];
+		foreach ( $order->get_items() as $item ) {
+			$product_id = $item->get_product_id();
+			if ( ! get_post_meta( $product_id, self::BUNDLE_FLAG, true ) ) continue;
 
-		foreach ( $bundle_items as $bi ) {
-			$component = wc_get_product( $bi['product_id'] );
-			if ( ! $component ) continue;
+			$bundle_items = $this->get_bundle_items( $product_id );
+			if ( empty( $bundle_items ) ) continue;
 
-			$qty = absint( $bi['qty_default'] ?? 1 ) * $parent_qty;
+			$parent_qty = $item->get_quantity();
 
-			$line = new \WC_Order_Item_Product();
-			$line->set_product( $component );
-			$line->set_name( '↳ ' . $component->get_name() );
-			$line->set_quantity( $qty );
-			$line->set_subtotal( 0 );
-			$line->set_total( 0 );
-			$line->add_meta_data( '_sijab_bundled_by', $product_id, true );
-			$order->add_item( $line );
+			foreach ( $bundle_items as $bi ) {
+				$component = wc_get_product( $bi['product_id'] );
+				if ( ! $component ) continue;
+
+				$qty = absint( $bi['qty_default'] ?? 1 ) * $parent_qty;
+
+				$line = new \WC_Order_Item_Product();
+				$line->set_product( $component );
+				$line->set_name( '↳ ' . $component->get_name() );
+				$line->set_quantity( $qty );
+				$line->set_subtotal( 0 );
+				$line->set_total( 0 );
+				$line->add_meta_data( '_sijab_bundled_by', $product_id, true );
+				$order->add_item( $line );
+				$added = true;
+			}
+		}
+
+		if ( $added ) {
+			$order->update_meta_data( '_sijab_bundle_components_added', '1' );
+			$order->save();
 		}
 	}
 }
