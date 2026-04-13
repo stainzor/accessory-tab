@@ -272,13 +272,15 @@
 	});
 
 	// ── Checklist: add checked accessories when main add-to-cart is submitted ──
+	// Returns a Promise that resolves when all checked accessories have been added.
 	function addCheckedAccessories() {
 		var checkboxes = document.querySelectorAll('.sijab-checklist__input:checked');
-		if (!checkboxes.length) return;
+		if (!checkboxes.length) return Promise.resolve();
 
 		var ajaxUrl = (typeof sijabAccStats !== 'undefined') ? sijabAccStats.ajax_url : '/wp-admin/admin-ajax.php';
 		var parentId = (typeof sijabAccStats !== 'undefined') ? sijabAccStats.parent_id : '';
 
+		var promises = [];
 		checkboxes.forEach(function (cb) {
 			var productId = cb.getAttribute('data-product_id');
 			var body = new FormData();
@@ -287,29 +289,42 @@
 			body.append('quantity', '1');
 			if (parentId) body.append('sijab_acc_parent', parentId);
 
-			fetch(ajaxUrl, { method: 'POST', body: body });
+			promises.push(fetch(ajaxUrl, { method: 'POST', body: body }));
 			trackEvent(productId, 'add_to_cart');
 		});
+
+		return Promise.all(promises);
 	}
 
 	// Hook into the WooCommerce add-to-cart form submit.
+	// Prevent default, add accessories first, then re-submit the form.
+	var sijabSubmitting = false;
 	document.addEventListener('submit', function (e) {
 		var form = e.target.closest('form.cart');
 		if (!form) return;
-		// Only fire if there's a checklist on the page.
-		if (!document.querySelector('.sijab-checklist__input:checked')) return;
-		addCheckedAccessories();
-	});
+		if (sijabSubmitting) return; // Already re-submitting after accessories added.
 
-	// Also hook into AJAX add-to-cart button click (simple products use links, not forms).
-	if (typeof jQuery !== 'undefined') {
-		jQuery(document.body).on('added_to_cart', function () {
-			// Check if this was the main product's button (not an accessory button).
-			var section = document.querySelector('.sijab-accessories-section--checklist');
-			if (!section) return;
-			addCheckedAccessories();
+		var checked = document.querySelectorAll('.sijab-checklist__input:checked');
+		if (!checked.length) return; // No accessories checked, let form submit normally.
+
+		e.preventDefault();
+
+		// Disable button to prevent double-clicks.
+		var btn = form.querySelector('[type="submit"]');
+		if (btn) {
+			btn.disabled = true;
+			btn.style.opacity = '0.6';
+		}
+
+		addCheckedAccessories().then(function () {
+			sijabSubmitting = true;
+			form.submit();
+		}).catch(function () {
+			// If accessories fail, still submit the main product.
+			sijabSubmitting = true;
+			form.submit();
 		});
-	}
+	});
 
 	// Init mobile toggle when DOM is ready
 	if (document.readyState === 'loading') {

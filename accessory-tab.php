@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.30.1
+ * Version: 2.30.2
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.30.1';
+	const VERSION       = '2.30.2';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -966,6 +966,13 @@ class SIJAB_Tillbehor {
 		$permalink = $acc->get_permalink();
 		$image     = $acc->get_image( 'thumbnail', [ 'loading' => 'lazy' ] );
 		$is_simple = $acc->is_type( 'simple' ) && $acc->is_purchasable() && $acc->is_in_stock();
+
+		$stock_status = $acc->get_stock_status();
+		switch ( $stock_status ) {
+			case 'instock':     $stock_label = __( 'I lager', 'sijab-tillbehor' ); break;
+			case 'onbackorder': $stock_label = __( 'Beställningsvara', 'sijab-tillbehor' ); break;
+			default:            $stock_label = __( 'Slut i lager', 'sijab-tillbehor' );
+		}
 		?>
 		<div class="sijab-acc-card sijab-acc-card--checklist" data-accessory-id="<?php echo esc_attr( $acc_id ); ?>">
 			<?php if ( $is_simple ) : ?>
@@ -988,6 +995,9 @@ class SIJAB_Tillbehor {
 			<a href="<?php echo esc_url( $permalink ); ?>" class="sijab-acc-card__name">
 				<?php echo esc_html( $acc->get_name() ); ?>
 			</a>
+			<span class="sijab-acc-card__stock sijab-acc-card__stock--<?php echo esc_attr( $stock_status ); ?>">
+				<?php echo esc_html( $stock_label ); ?>
+			</span>
 			<div class="sijab-acc-card__price"><?php echo $acc->get_price_html(); ?></div>
 		</div>
 		<?php

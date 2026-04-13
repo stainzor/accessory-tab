@@ -997,6 +997,28 @@
 	text-decoration: none !important;
 }
 
+/* Stock label in checklist */
+.sijab-accessories-section--checklist .sijab-acc-card__stock {
+	flex-shrink: 0 !important;
+	font-size: 11px !important;
+	font-weight: 600 !important;
+	text-transform: uppercase !important;
+	letter-spacing: 0.03em;
+	white-space: nowrap !important;
+}
+
+.sijab-accessories-section--checklist .sijab-acc-card__stock--instock {
+	color: #2e7d32 !important;
+}
+
+.sijab-accessories-section--checklist .sijab-acc-card__stock--outofstock {
+	color: #c62828 !important;
+}
+
+.sijab-accessories-section--checklist .sijab-acc-card__stock--onbackorder {
+	color: #e65100 !important;
+}
+
 /* Price in checklist — right aligned */
 .sijab-accessories-section--checklist .sijab-acc-card__price {
 	flex-shrink: 0 !important;
