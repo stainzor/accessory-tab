@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.30.2
+ * Version: 2.30.3
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.30.2';
+	const VERSION       = '2.30.3';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -549,6 +549,8 @@ class SIJAB_Tillbehor {
 			if ( empty( $added ) ) { $skipped++; continue; }
 
 			update_post_meta( $bundle_id, self::META_KEY, $merged );
+			// Sync → WooCommerce cross-sells.
+			update_post_meta( $bundle_id, '_crosssell_ids', $merged );
 			$updated++;
 			$details[ $bundle_id ] = array_values( $added );
 		}
@@ -736,6 +738,8 @@ class SIJAB_Tillbehor {
 			} else {
 				delete_post_meta( $product_id, self::META_KEY );
 			}
+			// Sync → WooCommerce cross-sells.
+			update_post_meta( $product_id, '_crosssell_ids', $ids );
 			$updated++;
 		}
 
@@ -1326,6 +1330,9 @@ class SIJAB_Tillbehor {
 		} else {
 			$product->update_meta_data( self::META_KEY, $ids );
 		}
+
+		// Sync accessories → WooCommerce cross-sells so they stay in sync.
+		$product->set_cross_sell_ids( $ids );
 
 		// Save accessory category link.
 		$cat_id = absint( $_POST['sijab_acc_category_id'] ?? 0 );
