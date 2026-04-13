@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.29.8
+ * Version: 2.29.9
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.29.8';
+	const VERSION       = '2.29.9';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -119,7 +119,7 @@ class SIJAB_Tillbehor {
 			'custom_title' => '',
 			'columns'      => 4,
 			'max_visible'  => 3,                // How many cards to show before "Visa alla"
-			'layout'       => 'horizontal',     // horizontal | grid
+			'layout'       => 'horizontal',     // horizontal | grid | compact
 		];
 
 		$saved = get_option( self::OPTION, [] );
@@ -182,7 +182,7 @@ class SIJAB_Tillbehor {
 		$clean['custom_title'] = sanitize_text_field( $input['custom_title'] ?? '' );
 		$clean['columns']      = max( 2, min( 6, absint( $input['columns'] ?? 4 ) ) );
 		$clean['max_visible']  = max( 1, min( 12, absint( $input['max_visible'] ?? 3 ) ) );
-		$valid_layouts         = [ 'horizontal', 'grid' ];
+		$valid_layouts         = [ 'horizontal', 'grid', 'compact' ];
 		$clean['layout']       = in_array( $input['layout'] ?? '', $valid_layouts, true ) ? $input['layout'] : 'horizontal';
 
 		// Clear cached settings.
@@ -284,6 +284,10 @@ class SIJAB_Tillbehor {
 										<label style="display:block; margin-bottom:8px;">
 											<input type="radio" name="<?php echo self::OPTION; ?>[layout]" value="grid" <?php checked( $s['layout'], 'grid' ); ?> />
 											<?php esc_html_e( 'Bildrutnät (stora kort med bild)', 'sijab-tillbehor' ); ?>
+										</label>
+										<label style="display:block; margin-bottom:8px;">
+											<input type="radio" name="<?php echo self::OPTION; ?>[layout]" value="compact" <?php checked( $s['layout'], 'compact' ); ?> />
+											<?php esc_html_e( 'Kompakt lista (en rad per tillbehör, utan antal-väljare)', 'sijab-tillbehor' ); ?>
 										</label>
 									</fieldset>
 								</td>
@@ -791,15 +795,22 @@ class SIJAB_Tillbehor {
 		$layout      = $s['layout'];
 		$total       = count( $accessories );
 		$has_hidden  = $total > $max_visible;
-		$layout_class = 'horizontal' === $layout ? 'sijab-accessories-section--horizontal' : 'sijab-accessories-section--grid';
+		$layout_classes = [
+			'horizontal' => 'sijab-accessories-section--horizontal',
+			'grid'       => 'sijab-accessories-section--grid',
+			'compact'    => 'sijab-accessories-section--compact',
+		];
+		$layout_class = $layout_classes[ $layout ] ?? $layout_classes['horizontal'];
 		?>
 		<section class="sijab-accessories-section <?php echo esc_attr( $layout_class ); ?>" style="--sijab-columns: <?php echo $cols; ?>;">
-			<h2 class="sijab-accessories-section__title"><?php echo esc_html( $title ); ?></h2>
+			<?php if ( 'compact' !== $layout ) : ?>
+				<h2 class="sijab-accessories-section__title"><?php echo esc_html( $title ); ?></h2>
+			<?php endif; ?>
 			<div class="sijab-accessories-section__list">
 				<?php foreach ( $accessories as $i => $acc ) : ?>
 					<?php $hidden = $has_hidden && $i >= $max_visible; ?>
 					<div class="sijab-acc-item<?php echo $hidden ? ' sijab-acc-item--hidden' : ''; ?>">
-						<?php $this->render_accessory_card( $acc ); ?>
+						<?php 'compact' === $layout ? $this->render_compact_card( $acc ) : $this->render_accessory_card( $acc ); ?>
 					</div>
 				<?php endforeach; ?>
 			</div>
@@ -844,6 +855,42 @@ class SIJAB_Tillbehor {
 			default:
 				return sprintf( __( 'Tillbehör till %s', 'sijab-tillbehor' ), $product->get_name() );
 		}
+	}
+
+	/**
+	 * Render a compact single-line accessory row (image, name, price, button).
+	 */
+	private function render_compact_card( WC_Product $acc ): void {
+		$acc_id    = $acc->get_id();
+		$permalink = $acc->get_permalink();
+		$image     = $acc->get_image( 'thumbnail', [ 'loading' => 'lazy' ] );
+		$is_simple = $acc->is_type( 'simple' ) && $acc->is_purchasable() && $acc->is_in_stock();
+		$parent_id = get_the_ID();
+		?>
+		<div class="sijab-acc-card sijab-acc-card--compact" data-accessory-id="<?php echo esc_attr( $acc_id ); ?>">
+			<a href="<?php echo esc_url( $permalink ); ?>" class="sijab-acc-card__image">
+				<?php echo $image; ?>
+			</a>
+			<a href="<?php echo esc_url( $permalink ); ?>" class="sijab-acc-card__name">
+				<?php echo esc_html( $acc->get_name() ); ?>
+			</a>
+			<div class="sijab-acc-card__price"><?php echo $acc->get_price_html(); ?></div>
+			<?php if ( $is_simple ) : ?>
+				<a href="<?php echo esc_url( $acc->add_to_cart_url() ); ?>"
+				   class="button sijab-acc-atc-btn add_to_cart_button ajax_add_to_cart sijab-acc-atc"
+				   data-quantity="1"
+				   data-product_id="<?php echo esc_attr( $acc_id ); ?>"
+				   data-product_sku="<?php echo esc_attr( $acc->get_sku() ); ?>"
+				   data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>">
+					<?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?>
+				</a>
+			<?php else : ?>
+				<a href="<?php echo esc_url( $permalink ); ?>" class="button sijab-acc-atc-btn">
+					<?php esc_html_e( 'Visa produkt', 'sijab-tillbehor' ); ?>
+				</a>
+			<?php endif; ?>
+		</div>
+		<?php
 	}
 
 	/**
