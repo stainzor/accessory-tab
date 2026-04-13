@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.29.9
+ * Version: 2.30.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.29.9';
+	const VERSION       = '2.30.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -119,7 +119,7 @@ class SIJAB_Tillbehor {
 			'custom_title' => '',
 			'columns'      => 4,
 			'max_visible'  => 3,                // How many cards to show before "Visa alla"
-			'layout'       => 'horizontal',     // horizontal | grid | compact
+			'layout'       => 'horizontal',     // horizontal | grid | compact | checklist
 		];
 
 		$saved = get_option( self::OPTION, [] );
@@ -182,7 +182,7 @@ class SIJAB_Tillbehor {
 		$clean['custom_title'] = sanitize_text_field( $input['custom_title'] ?? '' );
 		$clean['columns']      = max( 2, min( 6, absint( $input['columns'] ?? 4 ) ) );
 		$clean['max_visible']  = max( 1, min( 12, absint( $input['max_visible'] ?? 3 ) ) );
-		$valid_layouts         = [ 'horizontal', 'grid', 'compact' ];
+		$valid_layouts         = [ 'horizontal', 'grid', 'compact', 'checklist' ];
 		$clean['layout']       = in_array( $input['layout'] ?? '', $valid_layouts, true ) ? $input['layout'] : 'horizontal';
 
 		// Clear cached settings.
@@ -288,6 +288,10 @@ class SIJAB_Tillbehor {
 										<label style="display:block; margin-bottom:8px;">
 											<input type="radio" name="<?php echo self::OPTION; ?>[layout]" value="compact" <?php checked( $s['layout'], 'compact' ); ?> />
 											<?php esc_html_e( 'Kompakt lista (en rad per tillbehör, utan antal-väljare)', 'sijab-tillbehor' ); ?>
+										</label>
+										<label style="display:block; margin-bottom:8px;">
+											<input type="radio" name="<?php echo self::OPTION; ?>[layout]" value="checklist" <?php checked( $s['layout'], 'checklist' ); ?> />
+											<?php esc_html_e( 'Checklista (kryssrutor, kategori-grupper, mörk bakgrund)', 'sijab-tillbehor' ); ?>
 										</label>
 									</fieldset>
 								</td>
@@ -799,13 +803,17 @@ class SIJAB_Tillbehor {
 			'horizontal' => 'sijab-accessories-section--horizontal',
 			'grid'       => 'sijab-accessories-section--grid',
 			'compact'    => 'sijab-accessories-section--compact',
+			'checklist'  => 'sijab-accessories-section--checklist',
 		];
 		$layout_class = $layout_classes[ $layout ] ?? $layout_classes['horizontal'];
 		?>
 		<section class="sijab-accessories-section <?php echo esc_attr( $layout_class ); ?>" style="--sijab-columns: <?php echo $cols; ?>;">
-			<?php if ( 'compact' !== $layout ) : ?>
+			<?php if ( ! in_array( $layout, [ 'compact', 'checklist' ], true ) ) : ?>
 				<h2 class="sijab-accessories-section__title"><?php echo esc_html( $title ); ?></h2>
 			<?php endif; ?>
+			<?php if ( 'checklist' === $layout ) : ?>
+				<?php $this->render_checklist( $accessories, $max_visible ); ?>
+			<?php else : ?>
 			<div class="sijab-accessories-section__list">
 				<?php foreach ( $accessories as $i => $acc ) : ?>
 					<?php $hidden = $has_hidden && $i >= $max_visible; ?>
@@ -814,6 +822,7 @@ class SIJAB_Tillbehor {
 					</div>
 				<?php endforeach; ?>
 			</div>
+			<?php endif; ?>
 			<?php if ( $has_hidden ) : ?>
 				<div class="sijab-accessories-section__footer">
 					<a href="#" class="sijab-show-all-link" data-show="<?php esc_attr_e( 'Visa alla tillbehör', 'sijab-tillbehor' ); ?> (<?php echo $total; ?>)" data-hide="<?php esc_attr_e( 'Visa färre', 'sijab-tillbehor' ); ?>">
@@ -889,6 +898,91 @@ class SIJAB_Tillbehor {
 					<?php esc_html_e( 'Visa produkt', 'sijab-tillbehor' ); ?>
 				</a>
 			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render the checklist layout — accessories grouped by product category.
+	 */
+	private function render_checklist( array $accessories, int $max_visible ): void {
+		// Group accessories by their primary product category.
+		$groups   = [];
+		$no_cat   = [];
+		foreach ( $accessories as $acc ) {
+			$terms = get_the_terms( $acc->get_id(), 'product_cat' );
+			if ( $terms && ! is_wp_error( $terms ) ) {
+				// Use the first (primary) category.
+				$cat = $terms[0];
+				$groups[ $cat->term_id ]['name']   = $cat->name;
+				$groups[ $cat->term_id ]['items'][] = $acc;
+			} else {
+				$no_cat[] = $acc;
+			}
+		}
+
+		$parent_id = get_the_ID();
+		$i = 0;
+		?>
+		<div class="sijab-accessories-section__list sijab-checklist">
+			<?php foreach ( $groups as $group ) : ?>
+				<div class="sijab-checklist__group">
+					<div class="sijab-checklist__heading"><?php echo esc_html( mb_strtoupper( $group['name'] ) ); ?></div>
+					<?php foreach ( $group['items'] as $acc ) : ?>
+						<?php $hidden = ( $i >= $max_visible ); ?>
+						<div class="sijab-acc-item<?php echo $hidden ? ' sijab-acc-item--hidden' : ''; ?>">
+							<?php $this->render_checklist_row( $acc, $parent_id ); ?>
+						</div>
+						<?php $i++; ?>
+					<?php endforeach; ?>
+				</div>
+			<?php endforeach; ?>
+			<?php if ( ! empty( $no_cat ) ) : ?>
+				<div class="sijab-checklist__group">
+					<?php foreach ( $no_cat as $acc ) : ?>
+						<?php $hidden = ( $i >= $max_visible ); ?>
+						<div class="sijab-acc-item<?php echo $hidden ? ' sijab-acc-item--hidden' : ''; ?>">
+							<?php $this->render_checklist_row( $acc, $parent_id ); ?>
+						</div>
+						<?php $i++; ?>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render a single checklist row (checkbox, image, name, price).
+	 */
+	private function render_checklist_row( WC_Product $acc, int $parent_id ): void {
+		$acc_id    = $acc->get_id();
+		$permalink = $acc->get_permalink();
+		$image     = $acc->get_image( 'thumbnail', [ 'loading' => 'lazy' ] );
+		$is_simple = $acc->is_type( 'simple' ) && $acc->is_purchasable() && $acc->is_in_stock();
+		?>
+		<div class="sijab-acc-card sijab-acc-card--checklist" data-accessory-id="<?php echo esc_attr( $acc_id ); ?>">
+			<?php if ( $is_simple ) : ?>
+				<label class="sijab-checklist__checkbox">
+					<input type="checkbox"
+					       class="sijab-checklist__input"
+					       data-product_id="<?php echo esc_attr( $acc_id ); ?>"
+					       data-product_sku="<?php echo esc_attr( $acc->get_sku() ); ?>"
+					       data-add_to_cart_url="<?php echo esc_url( $acc->add_to_cart_url() ); ?>"
+					       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>" />
+				</label>
+			<?php else : ?>
+				<span class="sijab-checklist__checkbox sijab-checklist__checkbox--disabled">
+					<input type="checkbox" disabled />
+				</span>
+			<?php endif; ?>
+			<a href="<?php echo esc_url( $permalink ); ?>" class="sijab-acc-card__image">
+				<?php echo $image; ?>
+			</a>
+			<a href="<?php echo esc_url( $permalink ); ?>" class="sijab-acc-card__name">
+				<?php echo esc_html( $acc->get_name() ); ?>
+			</a>
+			<div class="sijab-acc-card__price"><?php echo $acc->get_price_html(); ?></div>
 		</div>
 		<?php
 	}

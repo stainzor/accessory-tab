@@ -884,3 +884,181 @@
 		font-size: 12px !important;
 	}
 }
+
+/* ══════════════════════════════════════════════════════════════
+   CHECKLIST LAYOUT — checkboxes, category groups, dark rows
+   ══════════════════════════════════════════════════════════════ */
+
+.sijab-accessories-section--checklist {
+	background: transparent !important;
+	padding: 0 !important;
+	border-radius: 0 !important;
+	margin: 16px 0 24px !important;
+}
+
+.sijab-accessories-section--checklist .sijab-checklist {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+/* Category heading */
+.sijab-checklist__heading {
+	font-size: 13px !important;
+	font-weight: 700 !important;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	padding: 12px 16px 6px !important;
+	margin: 0 !important;
+	color: #333;
+	background: transparent;
+}
+
+/* Individual row */
+.sijab-acc-card--checklist {
+	display: flex !important;
+	align-items: center !important;
+	gap: 12px !important;
+	padding: 10px 16px !important;
+	margin: 0 !important;
+	background: #f0f0f0 !important;
+	border: none !important;
+	border-radius: 0 !important;
+	box-shadow: none !important;
+	min-height: 52px;
+}
+
+/* Alternating row colors */
+.sijab-accessories-section--checklist .sijab-acc-item:nth-child(odd) .sijab-acc-card--checklist {
+	background: #e6e6e6 !important;
+}
+
+.sijab-accessories-section--checklist .sijab-acc-item:nth-child(even) .sijab-acc-card--checklist {
+	background: #f0f0f0 !important;
+}
+
+/* Checkbox */
+.sijab-checklist__checkbox {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+}
+
+.sijab-checklist__checkbox input[type="checkbox"] {
+	width: 18px !important;
+	height: 18px !important;
+	margin: 0 !important;
+	cursor: pointer;
+	accent-color: var(--primary-color, #1e73be);
+}
+
+.sijab-checklist__checkbox--disabled input[type="checkbox"] {
+	cursor: not-allowed;
+	opacity: 0.4;
+}
+
+/* Image in checklist */
+.sijab-accessories-section--checklist .sijab-acc-card__image {
+	flex-shrink: 0 !important;
+	width: 48px !important;
+	height: 48px !important;
+	display: flex !important;
+	align-items: center !important;
+	justify-content: center !important;
+	border-radius: 4px !important;
+	overflow: hidden !important;
+	background: #fff;
+}
+
+.sijab-accessories-section--checklist .sijab-acc-card__image img {
+	width: 48px !important;
+	height: 48px !important;
+	object-fit: contain !important;
+	display: block !important;
+}
+
+/* Name in checklist */
+.sijab-accessories-section--checklist .sijab-acc-card__name {
+	flex: 1 !important;
+	font-size: 13px !important;
+	font-weight: 400 !important;
+	color: var(--primary-color, #1e73be) !important;
+	text-decoration: underline !important;
+	white-space: nowrap !important;
+	overflow: hidden !important;
+	text-overflow: ellipsis !important;
+	min-width: 0 !important;
+}
+
+.sijab-accessories-section--checklist .sijab-acc-card__name:hover {
+	text-decoration: none !important;
+}
+
+/* Price in checklist — right aligned */
+.sijab-accessories-section--checklist .sijab-acc-card__price {
+	flex-shrink: 0 !important;
+	font-size: 14px !important;
+	font-weight: 600 !important;
+	color: #222 !important;
+	white-space: nowrap !important;
+	text-align: right !important;
+	min-width: 80px !important;
+}
+
+.sijab-accessories-section--checklist .sijab-acc-card__price del {
+	opacity: 0.5;
+	font-size: 12px;
+}
+
+.sijab-accessories-section--checklist .sijab-acc-card__price ins {
+	text-decoration: none;
+}
+
+/* Hide WC "Visa produktsidan" link after add */
+.sijab-accessories-section--checklist .added_to_cart {
+	display: none !important;
+}
+
+/* Footer / show-all in checklist */
+.sijab-accessories-section--checklist .sijab-accessories-section__footer {
+	padding: 8px 16px;
+}
+
+.sijab-accessories-section--checklist .sijab-accessories-section__category-link {
+	padding: 4px 16px;
+}
+
+/* ── Mobile checklist ── */
+@media (max-width: 600px) {
+	.sijab-acc-card--checklist {
+		gap: 8px !important;
+		padding: 8px 10px !important;
+	}
+
+	.sijab-accessories-section--checklist .sijab-acc-card__image {
+		width: 36px !important;
+		height: 36px !important;
+	}
+
+	.sijab-accessories-section--checklist .sijab-acc-card__image img {
+		width: 36px !important;
+		height: 36px !important;
+	}
+
+	.sijab-accessories-section--checklist .sijab-acc-card__name {
+		font-size: 12px !important;
+	}
+
+	.sijab-accessories-section--checklist .sijab-acc-card__price {
+		font-size: 12px !important;
+		min-width: 60px !important;
+	}
+
+	.sijab-checklist__heading {
+		font-size: 12px !important;
+		padding: 10px 10px 4px !important;
+	}
+}

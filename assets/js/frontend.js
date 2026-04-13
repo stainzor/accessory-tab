@@ -271,6 +271,56 @@
 		trackEvent(getAccessoryId(link), 'product_click');
 	});
 
+	// ── Checklist: AJAX add-to-cart on checkbox toggle ──
+	document.addEventListener('change', function (e) {
+		var cb = e.target.closest('.sijab-checklist__input');
+		if (!cb) return;
+
+		var card      = cb.closest('.sijab-acc-card');
+		var productId = cb.getAttribute('data-product_id');
+		var row       = cb.closest('.sijab-acc-item') || cb.closest('.sijab-acc-card');
+
+		if (cb.checked) {
+			// Add to cart
+			row.style.opacity = '0.6';
+			var ajaxUrl = (typeof sijabAccStats !== 'undefined') ? sijabAccStats.ajax_url : '/wp-admin/admin-ajax.php';
+			var body = new FormData();
+			body.append('action', 'sijab_add_to_cart');
+			body.append('product_id', productId);
+			body.append('quantity', '1');
+
+			if (typeof sijabAccStats !== 'undefined' && sijabAccStats.parent_id) {
+				body.append('sijab_acc_parent', sijabAccStats.parent_id);
+			}
+
+			fetch(ajaxUrl, { method: 'POST', body: body })
+				.then(function (r) { return r.json(); })
+				.then(function (res) {
+					row.style.opacity = '1';
+					if (res && res.success) {
+						if (res.data && res.data.fragments && typeof jQuery !== 'undefined') {
+							jQuery(document.body).trigger('added_to_cart', [res.data.fragments, res.data.cart_hash]);
+						} else if (typeof jQuery !== 'undefined') {
+							jQuery(document.body).trigger('wc_fragment_refresh');
+						}
+						// Visual feedback — highlight row briefly
+						row.style.background = 'rgba(30,115,190,0.12)';
+						setTimeout(function () { row.style.background = ''; }, 1200);
+						trackEvent(productId, 'add_to_cart');
+					} else {
+						cb.checked = false;
+					}
+				})
+				.catch(function () {
+					row.style.opacity = '1';
+					cb.checked = false;
+				});
+		} else {
+			// Uncheck — just visual, we don't remove from cart (too complex).
+			row.style.background = '';
+		}
+	});
+
 	// Init mobile toggle when DOM is ready
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', initMobileToggle);
