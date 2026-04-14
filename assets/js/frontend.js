@@ -1,6 +1,6 @@
 /**
  * Accessory Tab — "Visa alla" toggle + qty selector + add-to-cart sync + stats tracking + checklist total.
- * v2.30.4
+ * v2.30.6
  */
 (function () {
 	'use strict';
@@ -350,22 +350,60 @@
 		return (isNaN(val) || val < 1) ? 1 : val;
 	}
 
+	// Detect current tax mode by comparing visible main product price against excl/incl values.
+	function detectTaxMode(totalBox) {
+		var excl = parseFloat(totalBox.getAttribute('data-main-price-excl')) || 0;
+		var incl = parseFloat(totalBox.getAttribute('data-main-price-incl')) || 0;
+		if (excl === incl) return totalBox.getAttribute('data-tax-display') || 'excl';
+
+		// Read the visible main product price on the single-product page.
+		var priceEl = document.querySelector('.product .summary .price .woocommerce-Price-amount, .product .summary p.price .woocommerce-Price-amount, .product-info .price .woocommerce-Price-amount');
+		if (!priceEl) return totalBox.getAttribute('data-tax-display') || 'excl';
+
+		var txt = priceEl.textContent.replace(/[^\d,.\-]/g, '').replace(/\s/g, '');
+		// Handle Swedish format: "50 000,00" — remove thousand seps then normalise decimal comma to dot.
+		var num = parseFloat(txt.replace(/\./g, '').replace(',', '.'));
+		if (isNaN(num)) return totalBox.getAttribute('data-tax-display') || 'excl';
+
+		// Pick whichever is closer.
+		return Math.abs(num - incl) < Math.abs(num - excl) ? 'incl' : 'excl';
+	}
+
 	function updateChecklistTotal() {
 		var totalBox = document.querySelector('.sijab-checklist__total');
 		if (!totalBox) return;
 
-		var mainPrice = parseFloat(totalBox.getAttribute('data-main-price')) || 0;
+		var mode      = detectTaxMode(totalBox);
+		var mainAttr  = mode === 'incl' ? 'data-main-price-incl' : 'data-main-price-excl';
+		var mainPrice = parseFloat(totalBox.getAttribute(mainAttr)) || 0;
+
 		var qty = getMainQty();
 		var sum = mainPrice * qty;
 
+		var priceAttr = mode === 'incl' ? 'data-price-incl' : 'data-price-excl';
 		var checked = document.querySelectorAll('.sijab-checklist__input:checked');
 		checked.forEach(function (cb) {
-			var p = parseFloat(cb.getAttribute('data-price')) || 0;
+			var p = parseFloat(cb.getAttribute(priceAttr));
+			// Fallback to legacy single attribute.
+			if (isNaN(p)) p = parseFloat(cb.getAttribute('data-price')) || 0;
 			sum += p;
 		});
 
-		var valueEl = totalBox.querySelector('.sijab-checklist__total-value');
+		var valueEl  = totalBox.querySelector('.sijab-checklist__total-value');
+		var suffixEl = totalBox.querySelector('.sijab-checklist__total-suffix');
 		if (valueEl) valueEl.innerHTML = formatPrice(sum, totalBox);
+		if (suffixEl) {
+			var lbl = mode === 'incl' ? totalBox.getAttribute('data-label-incl') : totalBox.getAttribute('data-label-excl');
+			suffixEl.textContent = lbl || '';
+		}
+	}
+
+	// Watch the main product price for changes (tax toggle flip) and recalculate.
+	function observeMainPrice() {
+		var priceWrap = document.querySelector('.product .summary .price, .product .summary p.price, .product-info .price');
+		if (!priceWrap || typeof MutationObserver === 'undefined') return;
+		var obs = new MutationObserver(function () { updateChecklistTotal(); });
+		obs.observe(priceWrap, { childList: true, subtree: true, characterData: true });
 	}
 
 	// Update on checkbox change.
@@ -388,13 +426,14 @@
 	});
 
 	// Init mobile toggle when DOM is ready
-	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', function () {
-			initMobileToggle();
-			updateChecklistTotal();
-		});
-	} else {
+	function initAll() {
 		initMobileToggle();
 		updateChecklistTotal();
+		observeMainPrice();
+	}
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', initAll);
+	} else {
+		initAll();
 	}
 })();

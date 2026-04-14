@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.30.5
+ * Version: 2.30.6
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.30.5';
+	const VERSION       = '2.30.6';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -962,29 +962,29 @@ class SIJAB_Tillbehor {
 		<?php
 		// Render the running total box below the checklist.
 		if ( $main_product instanceof WC_Product ) {
-			// Match the shop's tax display setting so the total aligns with the main product price.
-			$tax_display = get_option( 'woocommerce_tax_display_shop', 'excl' );
-			if ( 'incl' === $tax_display ) {
-				$main_price     = (float) wc_get_price_including_tax( $main_product );
-				$suffix_text    = __( 'Inkl moms', 'sijab-tillbehor' );
-			} else {
-				$main_price     = (float) wc_get_price_excluding_tax( $main_product );
-				$suffix_text    = __( 'Exkl moms', 'sijab-tillbehor' );
-			}
-			$currency      = get_woocommerce_currency_symbol();
-			$decimals      = wc_get_price_decimals();
-			$dec_sep       = wc_get_price_decimal_separator();
-			$thou_sep      = wc_get_price_thousand_separator();
+			// Pass both excl and incl values so JS can follow a frontend tax toggle.
+			$main_price_excl = (float) wc_get_price_excluding_tax( $main_product );
+			$main_price_incl = (float) wc_get_price_including_tax( $main_product );
+			$tax_display     = get_option( 'woocommerce_tax_display_shop', 'excl' );
+			$initial_price   = 'incl' === $tax_display ? $main_price_incl : $main_price_excl;
+			$currency        = get_woocommerce_currency_symbol();
+			$decimals        = wc_get_price_decimals();
+			$dec_sep         = wc_get_price_decimal_separator();
+			$thou_sep        = wc_get_price_thousand_separator();
 			?>
 			<div class="sijab-checklist__total"
-			     data-main-price="<?php echo esc_attr( $main_price ); ?>"
+			     data-main-price-excl="<?php echo esc_attr( $main_price_excl ); ?>"
+			     data-main-price-incl="<?php echo esc_attr( $main_price_incl ); ?>"
+			     data-tax-display="<?php echo esc_attr( $tax_display ); ?>"
 			     data-currency="<?php echo esc_attr( $currency ); ?>"
 			     data-decimals="<?php echo esc_attr( $decimals ); ?>"
 			     data-dec-sep="<?php echo esc_attr( $dec_sep ); ?>"
-			     data-thou-sep="<?php echo esc_attr( $thou_sep ); ?>">
+			     data-thou-sep="<?php echo esc_attr( $thou_sep ); ?>"
+			     data-label-excl="<?php esc_attr_e( 'Exkl moms', 'sijab-tillbehor' ); ?>"
+			     data-label-incl="<?php esc_attr_e( 'Inkl moms', 'sijab-tillbehor' ); ?>">
 				<span class="sijab-checklist__total-label"><?php esc_html_e( 'Totalt:', 'sijab-tillbehor' ); ?></span>
-				<span class="sijab-checklist__total-value"><?php echo wc_price( $main_price ); ?></span>
-				<span class="sijab-checklist__total-suffix"><?php echo esc_html( $suffix_text ); ?></span>
+				<span class="sijab-checklist__total-value"><?php echo wc_price( $initial_price ); ?></span>
+				<span class="sijab-checklist__total-suffix"></span>
 			</div>
 			<?php
 		}
@@ -1005,11 +1005,9 @@ class SIJAB_Tillbehor {
 			case 'onbackorder': $stock_label = __( 'Beställningsvara', 'sijab-tillbehor' ); break;
 			default:            $stock_label = __( 'Slut i lager', 'sijab-tillbehor' );
 		}
-		// Match shop tax display setting for accessory price shown in live total.
-		$acc_tax_display = get_option( 'woocommerce_tax_display_shop', 'excl' );
-		$acc_price = 'incl' === $acc_tax_display
-			? (float) wc_get_price_including_tax( $acc )
-			: (float) wc_get_price_excluding_tax( $acc );
+		// Provide both excl and incl so JS can follow a frontend tax toggle.
+		$acc_price_excl = (float) wc_get_price_excluding_tax( $acc );
+		$acc_price_incl = (float) wc_get_price_including_tax( $acc );
 		?>
 		<div class="sijab-acc-card sijab-acc-card--checklist" data-accessory-id="<?php echo esc_attr( $acc_id ); ?>">
 			<?php if ( $is_simple ) : ?>
@@ -1018,7 +1016,8 @@ class SIJAB_Tillbehor {
 					       class="sijab-checklist__input"
 					       data-product_id="<?php echo esc_attr( $acc_id ); ?>"
 					       data-product_sku="<?php echo esc_attr( $acc->get_sku() ); ?>"
-					       data-price="<?php echo esc_attr( $acc_price ); ?>"
+					       data-price-excl="<?php echo esc_attr( $acc_price_excl ); ?>"
+					       data-price-incl="<?php echo esc_attr( $acc_price_incl ); ?>"
 					       data-add_to_cart_url="<?php echo esc_url( $acc->add_to_cart_url() ); ?>"
 					       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>" />
 				</label>
