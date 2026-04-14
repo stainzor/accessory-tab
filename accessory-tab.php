@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.30.3
+ * Version: 2.30.4
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.30.3';
+	const VERSION       = '2.30.4';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -822,7 +822,7 @@ class SIJAB_Tillbehor {
 				<h2 class="sijab-accessories-section__title"><?php echo esc_html( $title ); ?></h2>
 			<?php endif; ?>
 			<?php if ( 'checklist' === $layout ) : ?>
-				<?php $this->render_checklist( $accessories, $max_visible ); ?>
+				<?php $this->render_checklist( $accessories, $max_visible, $product ); ?>
 			<?php else : ?>
 			<div class="sijab-accessories-section__list">
 				<?php foreach ( $accessories as $i => $acc ) : ?>
@@ -915,7 +915,7 @@ class SIJAB_Tillbehor {
 	/**
 	 * Render the checklist layout — accessories grouped by product category.
 	 */
-	private function render_checklist( array $accessories, int $max_visible ): void {
+	private function render_checklist( array $accessories, int $max_visible, WC_Product $main_product = null ): void {
 		// Group accessories by their primary product category.
 		$groups   = [];
 		$no_cat   = [];
@@ -960,6 +960,29 @@ class SIJAB_Tillbehor {
 			<?php endif; ?>
 		</div>
 		<?php
+		// Render the running total box below the checklist.
+		if ( $main_product instanceof WC_Product ) {
+			$main_price    = (float) wc_get_price_to_display( $main_product );
+			$price_suffix  = $main_product->get_price_suffix();
+			$currency      = get_woocommerce_currency_symbol();
+			$decimals      = wc_get_price_decimals();
+			$dec_sep       = wc_get_price_decimal_separator();
+			$thou_sep      = wc_get_price_thousand_separator();
+			?>
+			<div class="sijab-checklist__total"
+			     data-main-price="<?php echo esc_attr( $main_price ); ?>"
+			     data-currency="<?php echo esc_attr( $currency ); ?>"
+			     data-decimals="<?php echo esc_attr( $decimals ); ?>"
+			     data-dec-sep="<?php echo esc_attr( $dec_sep ); ?>"
+			     data-thou-sep="<?php echo esc_attr( $thou_sep ); ?>">
+				<span class="sijab-checklist__total-label"><?php esc_html_e( 'Totalt:', 'sijab-tillbehor' ); ?></span>
+				<span class="sijab-checklist__total-value"><?php echo wc_price( $main_price ); ?></span>
+				<?php if ( $price_suffix ) : ?>
+					<span class="sijab-checklist__total-suffix"><?php echo wp_kses_post( $price_suffix ); ?></span>
+				<?php endif; ?>
+			</div>
+			<?php
+		}
 	}
 
 	/**
@@ -977,6 +1000,7 @@ class SIJAB_Tillbehor {
 			case 'onbackorder': $stock_label = __( 'Beställningsvara', 'sijab-tillbehor' ); break;
 			default:            $stock_label = __( 'Slut i lager', 'sijab-tillbehor' );
 		}
+		$acc_price = (float) wc_get_price_to_display( $acc );
 		?>
 		<div class="sijab-acc-card sijab-acc-card--checklist" data-accessory-id="<?php echo esc_attr( $acc_id ); ?>">
 			<?php if ( $is_simple ) : ?>
@@ -985,6 +1009,7 @@ class SIJAB_Tillbehor {
 					       class="sijab-checklist__input"
 					       data-product_id="<?php echo esc_attr( $acc_id ); ?>"
 					       data-product_sku="<?php echo esc_attr( $acc->get_sku() ); ?>"
+					       data-price="<?php echo esc_attr( $acc_price ); ?>"
 					       data-add_to_cart_url="<?php echo esc_url( $acc->add_to_cart_url() ); ?>"
 					       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>" />
 				</label>

@@ -1,6 +1,6 @@
 /**
- * Accessory Tab — "Visa alla" toggle + qty selector + add-to-cart sync + stats tracking.
- * v2.22.0
+ * Accessory Tab — "Visa alla" toggle + qty selector + add-to-cart sync + stats tracking + checklist total.
+ * v2.30.4
  */
 (function () {
 	'use strict';
@@ -326,10 +326,75 @@
 		});
 	});
 
+	// ── Checklist total: live-updated sum of main product (× qty) + checked accessories ──
+	function formatPrice(amount, totalBox) {
+		var decimals = parseInt(totalBox.getAttribute('data-decimals'), 10);
+		if (isNaN(decimals)) decimals = 2;
+		var decSep  = totalBox.getAttribute('data-dec-sep') || ',';
+		var thouSep = totalBox.getAttribute('data-thou-sep') || ' ';
+		var currency = totalBox.getAttribute('data-currency') || 'kr';
+
+		var fixed = (Math.round(amount * Math.pow(10, decimals)) / Math.pow(10, decimals)).toFixed(decimals);
+		var parts = fixed.split('.');
+		// Insert thousands separator.
+		parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, thouSep);
+		var numStr = parts.length === 2 ? parts[0] + decSep + parts[1] : parts[0];
+		// Match WooCommerce wc_price() output: <span class="woocommerce-Price-amount amount"><bdi>NN,NN&nbsp;<span class="woocommerce-Price-currencySymbol">kr</span></bdi></span>
+		return '<span class="woocommerce-Price-amount amount"><bdi>' + numStr + '&nbsp;<span class="woocommerce-Price-currencySymbol">' + currency + '</span></bdi></span>';
+	}
+
+	function getMainQty() {
+		var qtyInput = document.querySelector('form.cart input.qty, form.cart input[name="quantity"]');
+		if (!qtyInput) return 1;
+		var val = parseInt(qtyInput.value, 10);
+		return (isNaN(val) || val < 1) ? 1 : val;
+	}
+
+	function updateChecklistTotal() {
+		var totalBox = document.querySelector('.sijab-checklist__total');
+		if (!totalBox) return;
+
+		var mainPrice = parseFloat(totalBox.getAttribute('data-main-price')) || 0;
+		var qty = getMainQty();
+		var sum = mainPrice * qty;
+
+		var checked = document.querySelectorAll('.sijab-checklist__input:checked');
+		checked.forEach(function (cb) {
+			var p = parseFloat(cb.getAttribute('data-price')) || 0;
+			sum += p;
+		});
+
+		var valueEl = totalBox.querySelector('.sijab-checklist__total-value');
+		if (valueEl) valueEl.innerHTML = formatPrice(sum, totalBox);
+	}
+
+	// Update on checkbox change.
+	document.addEventListener('change', function (e) {
+		if (e.target && e.target.classList && e.target.classList.contains('sijab-checklist__input')) {
+			updateChecklistTotal();
+		}
+	});
+
+	// Update on main product qty change.
+	document.addEventListener('input', function (e) {
+		if (e.target && e.target.matches && e.target.matches('form.cart input.qty, form.cart input[name="quantity"]')) {
+			updateChecklistTotal();
+		}
+	});
+	document.addEventListener('change', function (e) {
+		if (e.target && e.target.matches && e.target.matches('form.cart input.qty, form.cart input[name="quantity"]')) {
+			updateChecklistTotal();
+		}
+	});
+
 	// Init mobile toggle when DOM is ready
 	if (document.readyState === 'loading') {
-		document.addEventListener('DOMContentLoaded', initMobileToggle);
+		document.addEventListener('DOMContentLoaded', function () {
+			initMobileToggle();
+			updateChecklistTotal();
+		});
 	} else {
 		initMobileToggle();
+		updateChecklistTotal();
 	}
 })();

@@ -1084,3 +1084,55 @@
 		padding: 10px 10px 4px !important;
 	}
 }
+
+/* ── Checklist total box (v2.30.4) ── */
+.sijab-checklist__total {
+	display: flex !important;
+	align-items: baseline !important;
+	justify-content: flex-end !important;
+	flex-wrap: wrap;
+	gap: 8px !important;
+	margin: 12px 0 16px !important;
+	padding: 14px 16px !important;
+	background: #eef5fa !important;
+	border-radius: 6px !important;
+	font-size: 16px !important;
+}
+
+.sijab-checklist__total-label {
+	font-weight: 700 !important;
+	color: #333 !important;
+	margin-right: auto !important;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	font-size: 14px !important;
+}
+
+.sijab-checklist__total-value {
+	font-weight: 700 !important;
+	font-size: 20px !important;
+	color: var(--primary-color, #1e73be) !important;
+	white-space: nowrap;
+}
+
+.sijab-checklist__total-value .woocommerce-Price-amount {
+	font-size: inherit !important;
+	color: inherit !important;
+	font-weight: inherit !important;
+}
+
+.sijab-checklist__total-suffix {
+	font-size: 12px !important;
+	color: #666 !important;
+	font-weight: 400 !important;
+}
+
+@media (max-width: 600px) {
+	.sijab-checklist__total {
+		padding: 10px 12px !important;
+		font-size: 14px !important;
+	}
+	.sijab-checklist__total-value {
+		font-size: 17px !important;
+	}
+}
