@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.30.4
+ * Version: 2.30.5
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.30.4';
+	const VERSION       = '2.30.5';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -962,8 +962,15 @@ class SIJAB_Tillbehor {
 		<?php
 		// Render the running total box below the checklist.
 		if ( $main_product instanceof WC_Product ) {
-			$main_price    = (float) wc_get_price_to_display( $main_product );
-			$price_suffix  = $main_product->get_price_suffix();
+			// Match the shop's tax display setting so the total aligns with the main product price.
+			$tax_display = get_option( 'woocommerce_tax_display_shop', 'excl' );
+			if ( 'incl' === $tax_display ) {
+				$main_price     = (float) wc_get_price_including_tax( $main_product );
+				$suffix_text    = __( 'Inkl moms', 'sijab-tillbehor' );
+			} else {
+				$main_price     = (float) wc_get_price_excluding_tax( $main_product );
+				$suffix_text    = __( 'Exkl moms', 'sijab-tillbehor' );
+			}
 			$currency      = get_woocommerce_currency_symbol();
 			$decimals      = wc_get_price_decimals();
 			$dec_sep       = wc_get_price_decimal_separator();
@@ -977,9 +984,7 @@ class SIJAB_Tillbehor {
 			     data-thou-sep="<?php echo esc_attr( $thou_sep ); ?>">
 				<span class="sijab-checklist__total-label"><?php esc_html_e( 'Totalt:', 'sijab-tillbehor' ); ?></span>
 				<span class="sijab-checklist__total-value"><?php echo wc_price( $main_price ); ?></span>
-				<?php if ( $price_suffix ) : ?>
-					<span class="sijab-checklist__total-suffix"><?php echo wp_kses_post( $price_suffix ); ?></span>
-				<?php endif; ?>
+				<span class="sijab-checklist__total-suffix"><?php echo esc_html( $suffix_text ); ?></span>
 			</div>
 			<?php
 		}
@@ -1000,7 +1005,11 @@ class SIJAB_Tillbehor {
 			case 'onbackorder': $stock_label = __( 'Beställningsvara', 'sijab-tillbehor' ); break;
 			default:            $stock_label = __( 'Slut i lager', 'sijab-tillbehor' );
 		}
-		$acc_price = (float) wc_get_price_to_display( $acc );
+		// Match shop tax display setting for accessory price shown in live total.
+		$acc_tax_display = get_option( 'woocommerce_tax_display_shop', 'excl' );
+		$acc_price = 'incl' === $acc_tax_display
+			? (float) wc_get_price_including_tax( $acc )
+			: (float) wc_get_price_excluding_tax( $acc );
 		?>
 		<div class="sijab-acc-card sijab-acc-card--checklist" data-accessory-id="<?php echo esc_attr( $acc_id ); ?>">
 			<?php if ( $is_simple ) : ?>
