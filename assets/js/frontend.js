@@ -1,6 +1,6 @@
 /**
  * Accessory Tab — "Visa alla" toggle + qty selector + add-to-cart sync + stats tracking + checklist total.
- * v2.30.6
+ * v2.30.7
  */
 (function () {
 	'use strict';
@@ -350,23 +350,46 @@
 		return (isNaN(val) || val < 1) ? 1 : val;
 	}
 
-	// Detect current tax mode by comparing visible main product price against excl/incl values.
+	function isVisible(el) {
+		if (!el) return false;
+		if (el.offsetParent === null) return false;
+		var cs = window.getComputedStyle(el);
+		if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) return false;
+		return true;
+	}
+
+	function parseSwedishNumber(txt) {
+		if (!txt) return NaN;
+		// Keep digits, comma, dot, minus. Remove thousand separator (space or nbsp).
+		var cleaned = txt.replace(/[\u00A0\s]/g, '').replace(/[^\d,.\-]/g, '');
+		// If both dot and comma present → dot is thousand sep, comma is decimal.
+		if (cleaned.indexOf(',') !== -1 && cleaned.indexOf('.') !== -1) {
+			cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+		} else if (cleaned.indexOf(',') !== -1) {
+			cleaned = cleaned.replace(',', '.');
+		}
+		return parseFloat(cleaned);
+	}
+
+	// Detect current tax mode by reading the visible main product price and comparing to excl/incl.
 	function detectTaxMode(totalBox) {
 		var excl = parseFloat(totalBox.getAttribute('data-main-price-excl')) || 0;
 		var incl = parseFloat(totalBox.getAttribute('data-main-price-incl')) || 0;
 		if (excl === incl) return totalBox.getAttribute('data-tax-display') || 'excl';
 
-		// Read the visible main product price on the single-product page.
-		var priceEl = document.querySelector('.product .summary .price .woocommerce-Price-amount, .product .summary p.price .woocommerce-Price-amount, .product-info .price .woocommerce-Price-amount');
-		if (!priceEl) return totalBox.getAttribute('data-tax-display') || 'excl';
+		// The page may render BOTH prices (incl + excl) and toggle visibility via CSS.
+		// Collect all candidates, pick the visible one.
+		var candidates = document.querySelectorAll('.product .summary .price .woocommerce-Price-amount, .product .summary p.price .woocommerce-Price-amount, .product-info .price .woocommerce-Price-amount, p.price .woocommerce-Price-amount');
+		var visibleNum = null;
+		for (var i = 0; i < candidates.length; i++) {
+			if (isVisible(candidates[i])) {
+				var n = parseSwedishNumber(candidates[i].textContent);
+				if (!isNaN(n)) { visibleNum = n; break; }
+			}
+		}
 
-		var txt = priceEl.textContent.replace(/[^\d,.\-]/g, '').replace(/\s/g, '');
-		// Handle Swedish format: "50 000,00" — remove thousand seps then normalise decimal comma to dot.
-		var num = parseFloat(txt.replace(/\./g, '').replace(',', '.'));
-		if (isNaN(num)) return totalBox.getAttribute('data-tax-display') || 'excl';
-
-		// Pick whichever is closer.
-		return Math.abs(num - incl) < Math.abs(num - excl) ? 'incl' : 'excl';
+		if (visibleNum === null) return totalBox.getAttribute('data-tax-display') || 'excl';
+		return Math.abs(visibleNum - incl) < Math.abs(visibleNum - excl) ? 'incl' : 'excl';
 	}
 
 	function updateChecklistTotal() {
