@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.32.1
+ * Version: 2.32.2
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -33,7 +33,7 @@ class SIJAB_Tillbehor {
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
 	const REQ_META      = '_sijab_accessory_requirements';  // [ ['accessory_id'=>X, 'requires'=>[['product_id'=>Y,'qty'=>1],...]], ... ]
-	const VERSION       = '2.32.1';
+	const VERSION       = '2.32.2';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -947,7 +947,8 @@ class SIJAB_Tillbehor {
 				   data-quantity="1"
 				   data-product_id="<?php echo esc_attr( $acc_id ); ?>"
 				   data-product_sku="<?php echo esc_attr( $acc->get_sku() ); ?>"
-				   data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>">
+				   data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>"
+				   <?php if ( $this->accessory_has_companions( $acc_id ) ) : ?>data-has-companions="1" data-main-product="<?php echo esc_attr( $parent_id ); ?>"<?php endif; ?>>
 					<?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?>
 				</a>
 			<?php else : ?>
@@ -1477,6 +1478,7 @@ class SIJAB_Tillbehor {
 							   data-product_id="<?php echo absint( $id ); ?>"
 							   data-product_sku="<?php echo esc_attr( $sku ); ?>"
 							   data-sijab_acc_parent="<?php echo absint( $GLOBALS['product']->get_id() ); ?>"
+							   <?php if ( $this->accessory_has_companions( $id ) ) : ?>data-has-companions="1" data-main-product="<?php echo absint( $GLOBALS['product']->get_id() ); ?>"<?php endif; ?>
 							   aria-label="<?php echo esc_attr( $acc->add_to_cart_description() ); ?>"
 							   rel="nofollow">
 								<?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?>

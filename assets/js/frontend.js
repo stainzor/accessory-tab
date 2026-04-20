@@ -899,6 +899,89 @@
 		});
 	}
 
+	// Horizontal/grid/compact layouts: intercept the per-accessory "LÄGG TILL"
+	// button click so the popup can show. If customer accepts "Lägg till båda",
+	// both products are added via the bundle-atomic AJAX endpoint (one round-trip,
+	// no race). If they reject, the original AJAX add proceeds for just the accessory.
+	document.addEventListener('click', function (e) {
+		var btn = e.target.closest('.sijab-acc-atc-btn[data-has-companions="1"]');
+		if (!btn) return;
+
+		// Bypass flag set by the "Endast accessory" branch → let WC AJAX run normally
+		if (btn.getAttribute('data-sijab-bypass-popup') === '1') {
+			btn.removeAttribute('data-sijab-bypass-popup');
+			return;
+		}
+
+		var accId = parseInt(btn.getAttribute('data-product_id'), 10);
+		var mainId = parseInt(btn.getAttribute('data-main-product'), 10);
+		if (!accId || !mainId) return;
+
+		// Dismissal: user already chose "Endast accessory" for this acc in this session
+		if (sessionDismissedCompanions[accId]) return;
+
+		var mainMap = (window.sijabCompanions || {})[mainId] || {};
+		var companions = mainMap[accId] || [];
+		if (!companions.length) return;
+
+		// Prevent WC's default AJAX add-to-cart so we can show the popup first.
+		e.preventDefault();
+		e.stopPropagation();
+
+		// Accessory name from the card
+		var card = btn.closest('.sijab-acc-card, .kr-card');
+		var nameEl = card ? card.querySelector('.sijab-acc-card__name, .kr-card__name') : null;
+		var accessoryName = nameEl ? nameEl.textContent.trim() : 'tillbehöret';
+
+		var h1 = document.querySelector('.product .summary h1, .product_title, h1.product_title');
+		var mainProductName = h1 ? h1.textContent.trim() : '';
+
+		buildCompanionModal(accessoryName, mainProductName, companions,
+			// Accept: atomic bundle add-to-cart (accessory + all companions)
+			function () {
+				sendHorizontalBundleAdd(accId, companions, mainId);
+			},
+			// Reject: remember dismissal and let the original WC AJAX add just the accessory
+			function () {
+				sessionDismissedCompanions[accId] = true;
+				btn.setAttribute('data-sijab-bypass-popup', '1');
+				btn.click();
+			}
+		);
+	}, true);
+
+	function sendHorizontalBundleAdd(accId, companions, mainId) {
+		var ajaxUrl = (typeof sijabAccStats !== 'undefined' && sijabAccStats.ajax_url)
+			? sijabAccStats.ajax_url
+			: '/wp-admin/admin-ajax.php';
+
+		var items = [];
+		items.push({ product_id: accId, quantity: 1, parent_id: mainId });
+		companions.forEach(function (c) {
+			items.push({ product_id: c.id, quantity: c.qty || 1, parent_id: mainId });
+		});
+
+		var body = new FormData();
+		body.append('action', 'sijab_bundle_add_to_cart');
+		body.append('items', JSON.stringify(items));
+
+		fetch(ajaxUrl, { method: 'POST', body: body, credentials: 'same-origin' })
+			.then(function (r) { return r.json().catch(function () { return {}; }); })
+			.then(function (res) {
+				if (res && res.success) {
+					if (window.jQuery) {
+						var $ = window.jQuery;
+						$(document.body).trigger('wc_fragment_refresh');
+						$(document.body).trigger('added_to_cart', [(res.data && res.data.fragments) || {}, (res.data && res.data.cart_hash) || '', $('body')]);
+					}
+				} else {
+					var msg = (res && res.data && res.data.message) ? res.data.message : 'Kunde inte lägga till i varukorgen';
+					alert(msg);
+				}
+			})
+			.catch(function () { alert('Nätverksfel. Försök igen.'); });
+	}
+
 	// Listen for checkbox changes to trigger the popup.
 	document.addEventListener('change', function (e) {
 		var cb = e.target;
