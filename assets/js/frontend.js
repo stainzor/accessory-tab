@@ -987,6 +987,11 @@
 			var varId = varIdInput ? parseInt(varIdInput.value, 10) || 0 : 0;
 			if (!varId) {
 				canIncludeMain = false;  // variable but not chosen → don't try to add main
+			} else if (mainInfo) {
+				// Enrich mainInfo with the selected variation's details so the popup
+				// row shows the exact variant name, price and stock — not just the
+				// parent product's "Från X kr" base-price string.
+				mainInfo = enrichMainInfoWithVariation(mainInfo, form, varId);
 			}
 		}
 		var mainInfoForPopup = canIncludeMain ? mainInfo : null;
@@ -1005,6 +1010,56 @@
 			{ selfInfo: selfInfo, mainInfo: mainInfoForPopup }
 		);
 	}, true);
+
+	// When the main product is variable and a variation is chosen, upgrade the
+	// main-product info (originally the parent's "Från X kr" base-price string)
+	// with the variation's actual name, price and stock. Data comes from
+	// form.variations_form[data-product_variations] which WC injects with the
+	// full variations array.
+	function enrichMainInfoWithVariation(baseInfo, form, variationId) {
+		try {
+			var raw = form.getAttribute('data-product_variations');
+			if (!raw) return baseInfo;
+			var variations = JSON.parse(raw);
+			if (!Array.isArray(variations)) return baseInfo;
+			var match = null;
+			for (var i = 0; i < variations.length; i++) {
+				if (parseInt(variations[i].variation_id, 10) === variationId) { match = variations[i]; break; }
+			}
+			if (!match) return baseInfo;
+
+			// Build a label from the chosen attribute values.
+			var attrs = match.attributes || {};
+			var labels = [];
+			Object.keys(attrs).forEach(function (k) {
+				var v = attrs[k];
+				if (!v) return;
+				// attribute value is usually a slug (e.g. "utan-lock") — prettify.
+				labels.push(String(v).replace(/-/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); }));
+			});
+			var variantLabel = labels.join(' / ');
+
+			// Clone to avoid mutating the global mainInfo.
+			var enriched = Object.assign({}, baseInfo);
+			if (variantLabel) {
+				enriched.name = baseInfo.name + ' — ' + variantLabel;
+			}
+			if (match.price_html) enriched.price_html = match.price_html;
+			if (match.is_in_stock) {
+				enriched.stock_label  = enriched.stock_label || 'I lager';
+				enriched.stock_status = 'instock';
+			} else {
+				enriched.stock_label  = 'Slut i lager';
+				enriched.stock_status = 'outofstock';
+			}
+			if (match.image && match.image.src) {
+				enriched.image = match.image.src;
+			}
+			return enriched;
+		} catch (err) {
+			return baseInfo;
+		}
+	}
 
 	// Pull name/image/price_html/stock from an accessory's card DOM. Used to
 	// render the "Ditt val"-row in the popup — we don't want to round-trip
