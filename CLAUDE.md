@@ -3,7 +3,7 @@
 ## Overview
 WooCommerce plugin that displays product accessories on the single product page. Supports five layouts, popup-driven required-companion rules, and tight integration with Svea Checkout + Visma.net via Sharespine.
 
-- **Current version:** 2.32.4
+- **Current version:** 2.32.6
 - **GitHub repo:** `stainzor/accessory-tab` (private)
 - **Test server:** test.sijab.com
 - **Production:** sijab.com
@@ -176,9 +176,19 @@ Outline pill button matching the filled LÄGG TILL style — pill shape, primary
 - **2.32.2** — Popup support on horizontal/grid/compact
 - **2.32.3** — Horizontal popup auto-includes main product (with skip_if_in_cart dedup)
 - **2.32.4** — Popup transparency: show all items with role badges (Huvudprodukt / Ditt val / Krävs för att passa)
+- **2.32.5** — Fix: variable main products silently dropped from popup batch-add (missing variation_id). Now pass variation_id + attributes from form.cart state, or skip main if no variation chosen.
+- **2.32.6** — Popup row shows variation details when variable main (name appended, exact variant price incl. rea, variant stock, variant image). Data from `form.variations_form[data-product_variations]`.
 
 ## Pending / Future
 - Reservdelar (spare parts) list — designed but not built (would be v2.33.0)
 - Cards-layout CTA counter doesn't include pending companions (shows "2 produkter" when actually 3 going in)
 - Variable products in bundles — not yet implemented
 - Local Cursor-projekt git structure still confused (use /tmp/acc-push/accessory-tab/ as canonical)
+- test.sijab.com fortfarande v2.32.4 — prod (sijab.com) är v2.32.6
+
+## Continuation guide (for resumption from a fresh session)
+1. Read this file + user's memory at `C:\Users\<user>\.claude\projects\G--Min-enhet-N8N-Cursor-projekt\memory\accessory-tab-plugin.md`
+2. Canonical working tree is `/tmp/acc-push/accessory-tab/` — edit, commit, push from there only
+3. Token `ghp_…` lives in `MEMORY.md` — never commit to source (GitHub push-protection blocks)
+4. Current focus: popup-companions feature is complete across all 5 layouts incl. variable main products
+5. Next likely feature: reservdelar list (v2.33.0) or resolve pending TODO items above
