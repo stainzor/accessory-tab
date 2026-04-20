@@ -62,17 +62,30 @@
 	text-decoration: underline !important;
 }
 
+/* Outline pill button — matches the filled "LÄGG TILL" button language but
+   stays visually secondary so it doesn't compete with primary CTAs. */
 .sijab-show-all-link {
-	font-size: 14px;
-	font-weight: 500;
-	color: #0073aa;
-	text-decoration: none;
+	display: inline-block !important;
+	padding: 9px 22px !important;
+	border: 2px solid var(--primary-color, #1e73be) !important;
+	border-radius: 99px !important;
+	background: transparent !important;
+	color: var(--primary-color, #1e73be) !important;
+	font-size: 13px !important;
+	font-weight: 600 !important;
+	line-height: 1.2 !important;
+	text-transform: none !important;
+	text-decoration: none !important;
 	cursor: pointer;
+	transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+	box-shadow: none !important;
 }
 
-.sijab-show-all-link:hover {
-	text-decoration: underline;
-	color: #005a87;
+.sijab-show-all-link:hover,
+.sijab-show-all-link:focus {
+	background: var(--primary-color, #1e73be) !important;
+	color: #fff !important;
+	text-decoration: none !important;
 }
 
 /* ══════════════════════════════════════════
@@ -1039,9 +1052,56 @@
 	text-decoration: none;
 }
 
+/* Variable product price_html wraps in <p class="price"> with theme-level 21px styling — force checklist size */
+.sijab-accessories-section--checklist .sijab-acc-card__price .price,
+.sijab-accessories-section--checklist .sijab-acc-card__price p.price {
+	margin: 0 !important;
+	padding: 0 !important;
+	font-size: 14px !important;
+	font-weight: 600 !important;
+	line-height: 1.2 !important;
+	display: inline !important;
+}
+
+.sijab-accessories-section--checklist .sijab-acc-card__price .amount,
+.sijab-accessories-section--checklist .sijab-acc-card__price .woocommerce-Price-amount,
+.sijab-accessories-section--checklist .sijab-acc-card__price .product-tax {
+	font-size: 14px !important;
+	font-weight: 600 !important;
+	color: #222 !important;
+}
+
 /* Hide WC "Visa produktsidan" link after add */
 .sijab-accessories-section--checklist .added_to_cart {
 	display: none !important;
+}
+
+/* ── Checklist: variable product variant select ── */
+.sijab-checklist__var-select {
+	flex-shrink: 0 !important;
+	height: 32px !important;
+	padding: 4px 24px 4px 10px !important;
+	margin: 0 !important;
+	font-size: 13px !important;
+	background-color: #fff !important;
+	border: 1px solid #c7c7c7 !important;
+	border-radius: 4px !important;
+	min-width: 140px !important;
+	max-width: 200px !important;
+	line-height: 1.2 !important;
+	color: #333 !important;
+	cursor: pointer;
+}
+
+.sijab-checklist__var-select:focus {
+	outline: 2px solid var(--primary-color, #1e73be);
+	outline-offset: 1px;
+}
+
+/* Variable-row checkbox: dim until a variant is picked */
+.sijab-checklist__checkbox--variable input[type="checkbox"]:disabled {
+	opacity: 0.35;
+	cursor: not-allowed;
 }
 
 /* Footer / show-all in checklist */
@@ -1135,4 +1195,417 @@
 	.sijab-checklist__total-value {
 		font-size: 17px !important;
 	}
+}
+
+/* =================================================================
+   "cards" layout — paketbyggare (self-contained, uses .kr-* names)
+   ================================================================= */
+.sijab-accessories-section--cards {
+	background: transparent !important;
+	padding: 0 !important;
+	margin-bottom: 20px !important;
+}
+.sijab-accessories-section--cards .sijab-accessories-section__footer,
+.sijab-accessories-section--cards .sijab-accessories-section__category-link {
+	display: none !important;
+}
+
+.kr-bundle-cards {
+	background: transparent;
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+	font-family: inherit;
+}
+.kr-bundle-cards__title {
+	font-size: 22px;
+	font-weight: 800;
+	color: #111;
+	margin: 0 0 14px;
+	padding: 0;
+	line-height: 1.2;
+}
+
+/* Grid — 2 columns desktop */
+.kr-bundle-cards__grid {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 16px;
+	margin: 0 0 22px;
+}
+
+/* Card — horizontal: image left, content right, meta bottom */
+.kr-card {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	background: #fff;
+	border: 2px solid #e3e9f0;
+	border-radius: 10px;
+	padding: 14px 16px 12px;
+	cursor: pointer;
+	transition: border-color .15s ease, box-shadow .15s ease;
+	user-select: none;
+	box-sizing: border-box;
+}
+.kr-card:hover {
+	border-color: #1e73be;
+	box-shadow: 0 3px 10px rgba(30, 115, 190, 0.10);
+}
+.kr-card--active {
+	border-color: #1e73be;
+	box-shadow: 0 2px 8px rgba(30, 115, 190, 0.12);
+}
+.kr-card--disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+.kr-card--disabled:hover {
+	border-color: #e3e9f0;
+	box-shadow: none;
+}
+
+/* Hidden native checkbox */
+.kr-card__input {
+	position: absolute;
+	opacity: 0;
+	width: 1px;
+	height: 1px;
+	pointer-events: none;
+}
+
+/* Top row: image + body side-by-side */
+.kr-card__top {
+	display: flex;
+	align-items: flex-start;
+	gap: 14px;
+	flex: 1 1 auto;
+}
+
+/* Image (left) */
+.kr-card__image {
+	flex: 0 0 76px;
+	width: 76px;
+	height: 76px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #f6f9fc;
+	border-radius: 8px;
+	overflow: hidden;
+	text-decoration: none;
+}
+.kr-card__image img {
+	max-width: 100%;
+	max-height: 100%;
+	width: auto;
+	height: auto;
+	object-fit: contain;
+}
+
+/* Body (right of image) */
+.kr-card__body {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 2px;
+}
+.kr-card__name {
+	font-size: 16px;
+	font-weight: 700;
+	color: #111;
+	line-height: 1.3;
+	text-decoration: none;
+	display: block;
+	margin: 0;
+	word-break: break-word;
+}
+.kr-card__name:hover {
+	color: #1e73be;
+	text-decoration: underline;
+}
+
+/* Variant select — right under name */
+.kr-card__select {
+	width: 100%;
+	max-width: 220px;
+	height: 34px;
+	border: 1px solid #cbd5df;
+	border-radius: 6px;
+	padding: 0 10px;
+	font-size: 13px;
+	background: #fff;
+	color: #111;
+	box-sizing: border-box;
+}
+.kr-card__select:focus {
+	outline: none;
+	border-color: #1e73be;
+	box-shadow: 0 0 0 3px rgba(30, 115, 190, 0.15);
+}
+
+/* Bottom row: green check + stock (left), price (right) */
+.kr-card__bottom {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-top: 12px;
+	padding-top: 10px;
+	border-top: 1px solid #edf1f5;
+}
+
+/* Green checkbox indicator */
+.kr-card__check {
+	flex: 0 0 22px;
+	width: 22px;
+	height: 22px;
+	border: 2px solid #cbd5df;
+	border-radius: 5px;
+	background: #fff;
+	position: relative;
+	transition: background .15s ease, border-color .15s ease;
+}
+.kr-card--active .kr-card__check {
+	border-color: #2e7d32;
+	background: #2e7d32;
+}
+.kr-card--active .kr-card__check::after {
+	content: '';
+	position: absolute;
+	top: 2px;
+	left: 5px;
+	width: 5px;
+	height: 10px;
+	border: solid #fff;
+	border-width: 0 2px 2px 0;
+	transform: rotate(45deg);
+}
+.kr-card--disabled .kr-card__check {
+	background: #f0f0f0;
+}
+
+/* Stock label next to check */
+.kr-card__stock {
+	flex: 1 1 auto;
+	font-size: 13px;
+	font-weight: 500;
+	color: #2e7d32;
+	text-transform: none;
+	letter-spacing: 0;
+}
+.kr-card__stock.sijab-acc-card__stock--instock { color: #2e7d32; }
+.kr-card__stock.sijab-acc-card__stock--outofstock { color: #c62828; }
+.kr-card__stock.sijab-acc-card__stock--onbackorder { color: #ef6c00; }
+
+/* Existing JS overwrites the stock element's className on variant select, which
+   drops our .kr-card__stock class. Scope these rules to .kr-bundle-cards so they
+   still apply without relying on the .kr-card__stock class. Does not affect
+   other layouts because it's prefixed with .kr-bundle-cards. */
+.kr-bundle-cards .sijab-acc-card__stock {
+	text-transform: none !important;
+	letter-spacing: 0 !important;
+	font-size: 13px !important;
+	font-weight: 500 !important;
+}
+
+/* Price (right) */
+.kr-card__price {
+	flex: 0 0 auto;
+	font-size: 16px;
+	font-weight: 700;
+	color: #111;
+	text-align: right;
+	line-height: 1.2;
+}
+.kr-card__price .woocommerce-Price-amount {
+	font-weight: 700;
+}
+.kr-card__price .amount,
+.kr-card__price .woocommerce-Price-currencySymbol {
+	font-weight: 700;
+}
+
+/* ── Summary section ── */
+.kr-bundle-summary {
+	margin: 0;
+	padding: 0;
+}
+.kr-bundle-summary__title {
+	font-size: 20px;
+	font-weight: 800;
+	color: #111;
+	margin: 0 0 10px;
+	padding: 0;
+	line-height: 1.3;
+}
+
+.kr-bundle-cards .kr-bundle-total {
+	background: transparent !important;
+	border: 0 !important;
+	border-radius: 0 !important;
+	padding: 0 !important;
+	margin: 0 0 16px !important;
+	display: block !important;
+	font-size: 15px !important;
+	color: #111 !important;
+	font-weight: 400 !important;
+	text-align: left !important;
+}
+.kr-bundle-total__row {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	padding: 8px 2px;
+	border-bottom: 1px solid #edf1f5;
+}
+.kr-bundle-total__row--grand {
+	background: #eaf3fb !important;
+	border-bottom: 0 !important;
+	border-radius: 8px !important;
+	padding: 14px 16px !important;
+	margin-top: 10px;
+	font-size: 18px;
+	font-weight: 800;
+}
+.kr-bundle-total__label {
+	color: #111;
+	font-weight: 600;
+}
+.kr-bundle-total__row--grand .kr-bundle-total__label {
+	color: #111;
+	font-weight: 800;
+	text-transform: none;
+	letter-spacing: 0.3px;
+	font-size: 16px;
+}
+.kr-bundle-total__value {
+	color: #111;
+	font-weight: 700;
+}
+.kr-bundle-total__row--grand .kr-bundle-total__value {
+	color: #1e73be;
+	font-size: 24px;
+	font-weight: 800;
+}
+.kr-bundle-total__suffix {
+	font-size: 11px;
+	color: #888;
+	font-weight: 400;
+	margin-left: 6px;
+}
+
+/* Neutralise inherited checklist__total child styles */
+.kr-bundle-cards .sijab-checklist__total-label,
+.kr-bundle-cards .sijab-checklist__total-value,
+.kr-bundle-cards .sijab-checklist__total-suffix {
+	display: inline-block !important;
+	font-size: inherit !important;
+	color: inherit !important;
+	font-weight: inherit !important;
+}
+.kr-bundle-cards .kr-bundle-total__row--grand .sijab-checklist__total-value {
+	color: #1e73be !important;
+	font-size: 24px !important;
+	font-weight: 800 !important;
+}
+
+/* CTA button — full width, blue */
+.kr-bundle-cta {
+	display: block;
+	width: 100%;
+	margin: 14px 0 0 !important;
+	padding: 14px 20px !important;
+	background: #1e73be !important;
+	color: #fff !important;
+	border: 0 !important;
+	border-radius: 8px !important;
+	font-size: 16px !important;
+	font-weight: 700 !important;
+	text-align: center !important;
+	cursor: pointer;
+	transition: background .15s ease, transform .05s ease;
+	line-height: 1.2 !important;
+	text-transform: none !important;
+	box-shadow: none !important;
+	font-family: inherit !important;
+}
+.kr-bundle-cta:hover,
+.kr-bundle-cta:focus {
+	background: #155a96 !important;
+	color: #fff !important;
+}
+.kr-bundle-cta:active {
+	transform: translateY(1px);
+}
+.kr-bundle-cta:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+/* Mobile — stack cards */
+@media (max-width: 600px) {
+	.kr-bundle-cards__grid {
+		grid-template-columns: 1fr;
+		gap: 10px;
+	}
+	.kr-bundle-cards__title {
+		font-size: 20px;
+	}
+	.kr-card {
+		padding: 12px;
+	}
+	.kr-card__image {
+		flex: 0 0 64px;
+		width: 64px;
+		height: 64px;
+	}
+	.kr-card__name {
+		font-size: 15px;
+	}
+	.kr-bundle-total__row--grand {
+		padding: 12px 14px !important;
+		font-size: 16px;
+	}
+	.kr-bundle-total__row--grand .kr-bundle-total__value {
+		font-size: 20px !important;
+	}
+	.kr-bundle-cta {
+		padding: 13px 18px !important;
+		font-size: 15px !important;
+	}
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Cards layout — hide default WC add-to-cart UI.
+   The .kr-bundle-cta replaces the default button, so showing both
+   creates duplicate buttons. Only apply on product pages where
+   layout=cards (body.sijab-layout-cards set by filter_body_class).
+   ───────────────────────────────────────────────────────────── */
+body.sijab-layout-cards form.cart > .single_add_to_cart_button,
+body.sijab-layout-cards form.cart > button[name="add-to-cart"],
+body.sijab-layout-cards form.cart > .quantity,
+body.sijab-layout-cards form.cart .woocommerce-variation-add-to-cart > .single_add_to_cart_button,
+body.sijab-layout-cards form.cart .woocommerce-variation-add-to-cart > .quantity {
+	display: none !important;
+}
+
+/* Also hide any trailing "add to cart" row WC/Flatsome renders directly
+   inside form.cart (grouped-product rows are kept — they're nested differently). */
+body.sijab-layout-cards form.cart > .cart-inner-actions,
+body.sijab-layout-cards form.cart .wc-pao-addons-container + .single_add_to_cart_button {
+	display: none !important;
+}
+
+/* Cards layout — empty-state summary: when no accessories are checked, the
+   breakdown rows are meaningless (Tillbehör: 0 kr, Totalt == huvudpris).
+   Hide title + breakdown so only the CTA button remains. JS toggles the
+   data-empty attribute via updateCtaLabel(). */
+.kr-bundle-summary[data-empty] .kr-bundle-summary__title,
+.kr-bundle-summary[data-empty] .kr-bundle-total {
+	display: none !important;
+}
+.kr-bundle-summary[data-empty] {
+	padding-top: 0 !important;
 }

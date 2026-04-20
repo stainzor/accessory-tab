@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.30.7
+ * Version: 2.31.10
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.30.7';
+	const VERSION       = '2.31.10';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -43,6 +43,10 @@ class SIJAB_Tillbehor {
 		// Frontend hooks — registered dynamically based on placement setting.
 		add_action( 'wp', [ $this, 'register_frontend_hooks' ] );
 		add_action( 'wp_enqueue_scripts', [ $this, 'enqueue_frontend_assets' ] );
+
+		// Add body class on single product page when cards layout is active,
+		// so CSS can scope rules like "hide default WC button + qty" to that layout only.
+		add_filter( 'body_class', [ $this, 'filter_body_class' ] );
 
 		// Admin: produktredigerare — tillbehör.
 		add_filter( 'woocommerce_product_data_tabs', [ $this, 'add_admin_tab' ] );
@@ -61,6 +65,7 @@ class SIJAB_Tillbehor {
 		add_action( 'wp_ajax_sijab_save_acc_category', [ $this, 'ajax_save_acc_category' ] );
 		add_action( 'wp_ajax_sijab_get_product_prices', [ $this, 'ajax_get_product_prices' ] );
 		add_action( 'wp_ajax_sijab_bulk_set_accessories', [ $this, 'ajax_bulk_set_accessories' ] );
+		add_action( 'wp_ajax_sijab_get_product_thumb', [ $this, 'ajax_get_product_thumb' ] );
 
 		// Frontend: paketprodukter.
 		add_action( 'woocommerce_single_product_summary', [ $this, 'render_bundle_section' ], 35 );
@@ -73,6 +78,11 @@ class SIJAB_Tillbehor {
 		// AJAX: variable product add-to-cart from accessory card.
 		add_action( 'wp_ajax_sijab_add_to_cart', [ $this, 'ajax_add_to_cart' ] );
 		add_action( 'wp_ajax_nopriv_sijab_add_to_cart', [ $this, 'ajax_add_to_cart' ] );
+
+		// AJAX: batch add (main product + selected accessories) in one request.
+		// Serialized on server side to avoid WC cart-session race conditions.
+		add_action( 'wp_ajax_sijab_bundle_add_to_cart', [ $this, 'ajax_bundle_add_to_cart' ] );
+		add_action( 'wp_ajax_nopriv_sijab_bundle_add_to_cart', [ $this, 'ajax_bundle_add_to_cart' ] );
 
 		// Stats: AJAX tracking + cleanup cron.
 		add_action( 'wp_ajax_sijab_acc_track', [ $this, 'ajax_track_event' ] );
@@ -182,7 +192,7 @@ class SIJAB_Tillbehor {
 		$clean['custom_title'] = sanitize_text_field( $input['custom_title'] ?? '' );
 		$clean['columns']      = max( 2, min( 6, absint( $input['columns'] ?? 4 ) ) );
 		$clean['max_visible']  = max( 1, min( 12, absint( $input['max_visible'] ?? 3 ) ) );
-		$valid_layouts         = [ 'horizontal', 'grid', 'compact', 'checklist' ];
+		$valid_layouts         = [ 'horizontal', 'grid', 'compact', 'checklist', 'cards' ];
 		$clean['layout']       = in_array( $input['layout'] ?? '', $valid_layouts, true ) ? $input['layout'] : 'horizontal';
 
 		// Clear cached settings.
@@ -292,6 +302,10 @@ class SIJAB_Tillbehor {
 										<label style="display:block; margin-bottom:8px;">
 											<input type="radio" name="<?php echo self::OPTION; ?>[layout]" value="checklist" <?php checked( $s['layout'], 'checklist' ); ?> />
 											<?php esc_html_e( 'Checklista (kryssrutor, kategori-grupper, mörk bakgrund)', 'sijab-tillbehor' ); ?>
+										</label>
+										<label style="display:block; margin-bottom:8px;">
+											<input type="radio" name="<?php echo self::OPTION; ?>[layout]" value="cards" <?php checked( $s['layout'], 'cards' ); ?> />
+											<?php esc_html_e( 'Paketbyggare (klickbara kort + pris-breakdown)', 'sijab-tillbehor' ); ?>
 										</label>
 									</fieldset>
 								</td>
@@ -759,8 +773,8 @@ class SIJAB_Tillbehor {
 
 		$s = $this->get_settings();
 
-		// Checklist layout always renders just above the add-to-cart button.
-		if ( 'checklist' === $s['layout'] ) {
+		// Checklist & cards layouts always render just above the add-to-cart button.
+		if ( in_array( $s['layout'], [ 'checklist', 'cards' ], true ) ) {
 			add_action( 'woocommerce_before_add_to_cart_form', [ $this, 'render_accessories_section' ], 10 );
 			return;
 		}
@@ -777,6 +791,20 @@ class SIJAB_Tillbehor {
 				add_action( 'woocommerce_after_single_product_summary', [ $this, 'render_accessories_section' ], 7 );
 				break;
 		}
+	}
+
+	/**
+	 * Add body class on product pages so layout-specific CSS can scope rules.
+	 * Specifically: cards layout hides the default WC add-to-cart button + qty
+	 * because the bundle CTA replaces them.
+	 */
+	public function filter_body_class( $classes ) {
+		if ( ! function_exists( 'is_product' ) || ! is_product() ) return $classes;
+		$s = $this->get_settings();
+		if ( ! empty( $s['layout'] ) ) {
+			$classes[] = 'sijab-layout-' . sanitize_html_class( $s['layout'] );
+		}
+		return $classes;
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -814,15 +842,18 @@ class SIJAB_Tillbehor {
 			'grid'       => 'sijab-accessories-section--grid',
 			'compact'    => 'sijab-accessories-section--compact',
 			'checklist'  => 'sijab-accessories-section--checklist',
+			'cards'      => 'sijab-accessories-section--cards',
 		];
 		$layout_class = $layout_classes[ $layout ] ?? $layout_classes['horizontal'];
 		?>
 		<section class="sijab-accessories-section <?php echo esc_attr( $layout_class ); ?>" style="--sijab-columns: <?php echo $cols; ?>;">
-			<?php if ( ! in_array( $layout, [ 'compact', 'checklist' ], true ) ) : ?>
+			<?php if ( ! in_array( $layout, [ 'compact', 'checklist', 'cards' ], true ) ) : ?>
 				<h2 class="sijab-accessories-section__title"><?php echo esc_html( $title ); ?></h2>
 			<?php endif; ?>
 			<?php if ( 'checklist' === $layout ) : ?>
 				<?php $this->render_checklist( $accessories, $max_visible, $product ); ?>
+			<?php elseif ( 'cards' === $layout ) : ?>
+				<?php $this->render_cards_bundle( $accessories, $product ); ?>
 			<?php else : ?>
 			<div class="sijab-accessories-section__list">
 				<?php foreach ( $accessories as $i => $acc ) : ?>
@@ -993,23 +1024,81 @@ class SIJAB_Tillbehor {
 	/**
 	 * Render a single checklist row (checkbox, image, name, price).
 	 */
-	private function render_checklist_row( WC_Product $acc, int $parent_id ): void {
-		$acc_id    = $acc->get_id();
-		$permalink = $acc->get_permalink();
-		$image     = $acc->get_image( 'thumbnail', [ 'loading' => 'lazy' ] );
-		$is_simple = $acc->is_type( 'simple' ) && $acc->is_purchasable() && $acc->is_in_stock();
-
-		$stock_status = $acc->get_stock_status();
-		switch ( $stock_status ) {
-			case 'instock':     $stock_label = __( 'I lager', 'sijab-tillbehor' ); break;
-			case 'onbackorder': $stock_label = __( 'Beställningsvara', 'sijab-tillbehor' ); break;
-			default:            $stock_label = __( 'Slut i lager', 'sijab-tillbehor' );
+	/**
+	 * Get the stock display for an accessory — label + status class.
+	 *
+	 * Uses WC_Product::get_availability() which runs 'woocommerce_get_availability'
+	 * and 'woocommerce_get_availability_text' filters. Other plugins / themes use
+	 * those filters to override the default "Beställningsvara" text with custom
+	 * copy like "Leveranstid 1-3 dagar". This ensures the accessory row shows the
+	 * SAME stock text that the product page itself would show.
+	 *
+	 * For variable products we deliberately return an empty label — JS populates
+	 * it via data-stock-label on the selected variation option.
+	 *
+	 * @param WC_Product $product
+	 * @return array{status:string,label:string}
+	 */
+	private function get_stock_display( WC_Product $product ): array {
+		if ( $product->is_type( 'variable' ) ) {
+			return [ 'status' => '', 'label' => '' ];
 		}
+		$status       = $product->get_stock_status();  // 'instock' | 'outofstock' | 'onbackorder'
+		$availability = $product->get_availability();  // filter-aware array
+		$label        = isset( $availability['availability'] ) ? (string) $availability['availability'] : '';
+
+		// Fallback: if the filter chain returned an empty label but the product has
+		// a known status, provide our defaults so the badge never disappears silently.
+		if ( '' === $label ) {
+			switch ( $status ) {
+				case 'instock':     $label = __( 'I lager', 'sijab-tillbehor' ); break;
+				case 'onbackorder': $label = __( 'Beställningsvara', 'sijab-tillbehor' ); break;
+				case 'outofstock':  $label = __( 'Slut i lager', 'sijab-tillbehor' ); break;
+			}
+		}
+		return [ 'status' => $status, 'label' => $label ];
+	}
+
+	/**
+	 * Get a stock label for a single variation (from get_available_variations()).
+	 * Fetches the WC_Product_Variation so we can run the same filter-aware lookup.
+	 *
+	 * @param array $v One entry from $product->get_available_variations().
+	 * @return string
+	 */
+	private function get_variation_stock_label( array $v ): string {
+		$variation_id = isset( $v['variation_id'] ) ? absint( $v['variation_id'] ) : 0;
+		if ( $variation_id ) {
+			$var_product = wc_get_product( $variation_id );
+			if ( $var_product instanceof WC_Product ) {
+				$availability = $var_product->get_availability();
+				if ( ! empty( $availability['availability'] ) ) {
+					return (string) $availability['availability'];
+				}
+			}
+		}
+		// Fallback to raw in_stock boolean.
+		return ! empty( $v['is_in_stock'] )
+			? __( 'I lager', 'sijab-tillbehor' )
+			: __( 'Slut i lager', 'sijab-tillbehor' );
+	}
+
+	private function render_checklist_row( WC_Product $acc, int $parent_id ): void {
+		$acc_id      = $acc->get_id();
+		$permalink   = $acc->get_permalink();
+		$image       = $acc->get_image( 'thumbnail', [ 'loading' => 'lazy' ] );
+		$is_simple   = $acc->is_type( 'simple' ) && $acc->is_purchasable() && $acc->is_in_stock();
+		$is_variable = $acc->is_type( 'variable' );
+
+		// Filter-aware stock text (respects third-party plugins that override WC defaults).
+		$stock_display = $this->get_stock_display( $acc );
+		$stock_status  = $stock_display['status'];
+		$stock_label   = $stock_display['label'];
 		// Provide both excl and incl so JS can follow a frontend tax toggle.
 		$acc_price_excl = (float) wc_get_price_excluding_tax( $acc );
 		$acc_price_incl = (float) wc_get_price_including_tax( $acc );
 		?>
-		<div class="sijab-acc-card sijab-acc-card--checklist" data-accessory-id="<?php echo esc_attr( $acc_id ); ?>">
+		<div class="sijab-acc-card sijab-acc-card--checklist<?php echo $is_variable ? ' sijab-acc-card--variable' : ''; ?>" data-accessory-id="<?php echo esc_attr( $acc_id ); ?>">
 			<?php if ( $is_simple ) : ?>
 				<label class="sijab-checklist__checkbox">
 					<input type="checkbox"
@@ -1019,6 +1108,18 @@ class SIJAB_Tillbehor {
 					       data-price-excl="<?php echo esc_attr( $acc_price_excl ); ?>"
 					       data-price-incl="<?php echo esc_attr( $acc_price_incl ); ?>"
 					       data-add_to_cart_url="<?php echo esc_url( $acc->add_to_cart_url() ); ?>"
+					       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>" />
+				</label>
+			<?php elseif ( $is_variable ) : ?>
+				<label class="sijab-checklist__checkbox sijab-checklist__checkbox--variable">
+					<input type="checkbox"
+					       class="sijab-checklist__input"
+					       disabled
+					       data-product_id="<?php echo esc_attr( $acc_id ); ?>"
+					       data-is-variable="1"
+					       data-variation_id=""
+					       data-price-excl="0"
+					       data-price-incl="0"
 					       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>" />
 				</label>
 			<?php else : ?>
@@ -1032,10 +1133,229 @@ class SIJAB_Tillbehor {
 			<a href="<?php echo esc_url( $permalink ); ?>" class="sijab-acc-card__name">
 				<?php echo esc_html( $acc->get_name() ); ?>
 			</a>
+			<?php if ( $is_variable ) : ?>
+				<?php $variations = $acc->get_available_variations(); ?>
+				<select class="sijab-checklist__var-select"
+				        data-product-id="<?php echo absint( $acc_id ); ?>"
+				        aria-label="<?php esc_attr_e( 'Välj variant', 'sijab-tillbehor' ); ?>">
+					<option value=""><?php esc_html_e( 'Välj variant...', 'sijab-tillbehor' ); ?></option>
+					<?php foreach ( $variations as $v ) :
+						$attr_parts = [];
+						foreach ( $v['attributes'] as $attr_key => $attr_val ) {
+							if ( ! $attr_val ) continue;
+							$taxonomy = str_replace( 'attribute_', '', $attr_key );
+							if ( taxonomy_exists( $taxonomy ) ) {
+								$term         = get_term_by( 'slug', $attr_val, $taxonomy );
+								$attr_parts[] = $term ? $term->name : ucfirst( str_replace( '-', ' ', $attr_val ) );
+							} else {
+								$attr_parts[] = $attr_val;
+							}
+						}
+						$v_label       = ! empty( $attr_parts ) ? implode( ' / ', $attr_parts ) : '#' . $v['variation_id'];
+						$v_stock       = $v['is_in_stock'] ? 'instock' : 'outofstock';
+						$v_stock_label = $this->get_variation_stock_label( $v );
+						$v_product     = wc_get_product( $v['variation_id'] );
+						$v_price_excl  = $v_product ? (float) wc_get_price_excluding_tax( $v_product ) : 0;
+						$v_price_incl  = $v_product ? (float) wc_get_price_including_tax( $v_product ) : 0;
+						$v_purchasable = $v_product && $v_product->is_purchasable() && $v['is_in_stock'] ? '1' : '0';
+						?>
+						<option value="<?php echo absint( $v['variation_id'] ); ?>"
+						        data-price-html="<?php echo esc_attr( $v['price_html'] ); ?>"
+						        data-price-excl="<?php echo esc_attr( $v_price_excl ); ?>"
+						        data-price-incl="<?php echo esc_attr( $v_price_incl ); ?>"
+						        data-stock="<?php echo esc_attr( $v_stock ); ?>"
+						        data-stock-label="<?php echo esc_attr( $v_stock_label ); ?>"
+						        data-sku="<?php echo esc_attr( $v['sku'] ?? '' ); ?>"
+						        data-purchasable="<?php echo esc_attr( $v_purchasable ); ?>"
+						        data-attributes="<?php echo esc_attr( wp_json_encode( $v['attributes'] ) ); ?>">
+							<?php echo esc_html( $v_label ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+			<?php endif; ?>
 			<span class="sijab-acc-card__stock sijab-acc-card__stock--<?php echo esc_attr( $stock_status ); ?>">
 				<?php echo esc_html( $stock_label ); ?>
 			</span>
 			<div class="sijab-acc-card__price"><?php echo $acc->get_price_html(); ?></div>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render the "cards" bundle layout — clickable cards + price breakdown.
+	 *
+	 * Reuses the .sijab-checklist__input / .sijab-checklist__var-select /
+	 * .sijab-checklist__total hooks so all existing JS (variant selector,
+	 * running total, add-to-cart flow) works without modification.
+	 */
+	private function render_cards_bundle( array $accessories, WC_Product $main_product ): void {
+		$parent_id = $main_product->get_id();
+		?>
+		<div class="kr-bundle-cards">
+			<h2 class="kr-bundle-cards__title"><?php esc_html_e( 'Bygg ditt paket', 'sijab-tillbehor' ); ?></h2>
+
+			<div class="kr-bundle-cards__grid">
+				<?php foreach ( $accessories as $acc ) : ?>
+					<?php $this->render_cards_bundle_card( $acc, $parent_id ); ?>
+				<?php endforeach; ?>
+			</div>
+
+			<?php
+			// Total box — reuses .sijab-checklist__total class + data attrs so existing
+			// updateChecklistTotal() JS updates the TOTAL value cell automatically.
+			$main_price_excl = (float) wc_get_price_excluding_tax( $main_product );
+			$main_price_incl = (float) wc_get_price_including_tax( $main_product );
+			$tax_display     = get_option( 'woocommerce_tax_display_shop', 'excl' );
+			$initial_price   = 'incl' === $tax_display ? $main_price_incl : $main_price_excl;
+			$currency        = get_woocommerce_currency_symbol();
+			$decimals        = wc_get_price_decimals();
+			$dec_sep         = wc_get_price_decimal_separator();
+			$thou_sep        = wc_get_price_thousand_separator();
+			?>
+			<div class="kr-bundle-summary" data-empty="1">
+				<h3 class="kr-bundle-summary__title"><?php esc_html_e( 'Ditt paket:', 'sijab-tillbehor' ); ?></h3>
+
+				<div class="kr-bundle-total sijab-checklist__total"
+				     data-main-price-excl="<?php echo esc_attr( $main_price_excl ); ?>"
+				     data-main-price-incl="<?php echo esc_attr( $main_price_incl ); ?>"
+				     data-tax-display="<?php echo esc_attr( $tax_display ); ?>"
+				     data-currency="<?php echo esc_attr( $currency ); ?>"
+				     data-decimals="<?php echo esc_attr( $decimals ); ?>"
+				     data-dec-sep="<?php echo esc_attr( $dec_sep ); ?>"
+				     data-thou-sep="<?php echo esc_attr( $thou_sep ); ?>"
+				     data-label-excl="<?php esc_attr_e( 'Exkl moms', 'sijab-tillbehor' ); ?>"
+				     data-label-incl="<?php esc_attr_e( 'Inkl moms', 'sijab-tillbehor' ); ?>">
+
+					<div class="kr-bundle-total__row">
+						<span class="kr-bundle-total__label"><?php esc_html_e( 'Produkt:', 'sijab-tillbehor' ); ?></span>
+						<span class="kr-bundle-total__value kr-bundle-total__product"><?php echo wc_price( $initial_price ); ?></span>
+					</div>
+					<div class="kr-bundle-total__row">
+						<span class="kr-bundle-total__label"><?php esc_html_e( 'Tillbehör:', 'sijab-tillbehor' ); ?></span>
+						<span class="kr-bundle-total__value kr-bundle-total__accessories"><?php echo wc_price( 0 ); ?></span>
+					</div>
+					<div class="kr-bundle-total__row kr-bundle-total__row--grand">
+						<span class="kr-bundle-total__label sijab-checklist__total-label"><?php esc_html_e( 'TOTALT:', 'sijab-tillbehor' ); ?></span>
+						<span class="kr-bundle-total__value sijab-checklist__total-value"><?php echo wc_price( $initial_price ); ?></span>
+						<span class="kr-bundle-total__suffix sijab-checklist__total-suffix"></span>
+					</div>
+				</div>
+
+				<button type="button" class="kr-bundle-cta"
+				        data-label-default="<?php esc_attr_e( 'Lägg i varukorgen', 'sijab-tillbehor' ); ?>"
+				        data-label-bundle="<?php esc_attr_e( 'Lägg paket i varukorgen', 'sijab-tillbehor' ); ?>"
+				        data-label-products="<?php esc_attr_e( 'produkter', 'sijab-tillbehor' ); ?>">
+					<?php esc_html_e( 'Lägg i varukorgen', 'sijab-tillbehor' ); ?>
+				</button>
+			</div>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render a single .kr-card in the cards bundle.
+	 * Reuses the same input classes as checklist so JS wiring is shared.
+	 */
+	private function render_cards_bundle_card( WC_Product $acc, int $parent_id ): void {
+		$acc_id      = $acc->get_id();
+		$permalink   = $acc->get_permalink();
+		$image       = $acc->get_image( 'woocommerce_thumbnail', [ 'loading' => 'lazy' ] );
+		$is_simple   = $acc->is_type( 'simple' ) && $acc->is_purchasable() && $acc->is_in_stock();
+		$is_variable = $acc->is_type( 'variable' );
+
+		// Filter-aware stock text (respects third-party plugins that override WC defaults).
+		$stock_display = $this->get_stock_display( $acc );
+		$stock_status  = $stock_display['status'];
+		$stock_label   = $stock_display['label'];
+		$acc_price_excl = (float) wc_get_price_excluding_tax( $acc );
+		$acc_price_incl = (float) wc_get_price_including_tax( $acc );
+		$card_disabled  = ( ! $is_simple && ! $is_variable );
+		?>
+		<div class="kr-card<?php echo $is_variable ? ' kr-card--variable' : ''; ?><?php echo $card_disabled ? ' kr-card--disabled' : ''; ?> sijab-acc-card--checklist<?php echo $is_variable ? ' sijab-acc-card--variable' : ''; ?>"
+		     data-accessory-id="<?php echo esc_attr( $acc_id ); ?>">
+			<?php if ( $is_simple ) : ?>
+				<input type="checkbox"
+				       class="sijab-checklist__input kr-card__input"
+				       data-product_id="<?php echo esc_attr( $acc_id ); ?>"
+				       data-product_sku="<?php echo esc_attr( $acc->get_sku() ); ?>"
+				       data-price-excl="<?php echo esc_attr( $acc_price_excl ); ?>"
+				       data-price-incl="<?php echo esc_attr( $acc_price_incl ); ?>"
+				       data-add_to_cart_url="<?php echo esc_url( $acc->add_to_cart_url() ); ?>"
+				       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>" />
+			<?php elseif ( $is_variable ) : ?>
+				<input type="checkbox"
+				       class="sijab-checklist__input kr-card__input"
+				       disabled
+				       data-product_id="<?php echo esc_attr( $acc_id ); ?>"
+				       data-is-variable="1"
+				       data-variation_id=""
+				       data-price-excl="0"
+				       data-price-incl="0"
+				       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>" />
+			<?php else : ?>
+				<input type="checkbox" class="kr-card__input" disabled />
+			<?php endif; ?>
+
+			<div class="kr-card__top">
+				<a href="<?php echo esc_url( $permalink ); ?>" class="kr-card__image sijab-acc-card__image">
+					<?php echo $image; ?>
+				</a>
+
+				<div class="kr-card__body">
+					<a href="<?php echo esc_url( $permalink ); ?>" class="kr-card__name sijab-acc-card__name">
+						<?php echo esc_html( $acc->get_name() ); ?>
+					</a>
+
+					<?php if ( $is_variable ) : ?>
+						<?php $variations = $acc->get_available_variations(); ?>
+						<select class="kr-card__select sijab-checklist__var-select"
+						        data-product-id="<?php echo absint( $acc_id ); ?>"
+						        aria-label="<?php esc_attr_e( 'Välj variant', 'sijab-tillbehor' ); ?>">
+							<option value=""><?php esc_html_e( 'Välj variant...', 'sijab-tillbehor' ); ?></option>
+							<?php foreach ( $variations as $v ) :
+								$attr_parts = [];
+								foreach ( $v['attributes'] as $attr_key => $attr_val ) {
+									if ( ! $attr_val ) continue;
+									$taxonomy = str_replace( 'attribute_', '', $attr_key );
+									if ( taxonomy_exists( $taxonomy ) ) {
+										$term         = get_term_by( 'slug', $attr_val, $taxonomy );
+										$attr_parts[] = $term ? $term->name : ucfirst( str_replace( '-', ' ', $attr_val ) );
+									} else {
+										$attr_parts[] = $attr_val;
+									}
+								}
+								$v_label       = ! empty( $attr_parts ) ? implode( ' / ', $attr_parts ) : '#' . $v['variation_id'];
+								$v_stock       = $v['is_in_stock'] ? 'instock' : 'outofstock';
+								$v_stock_label = $this->get_variation_stock_label( $v );
+								$v_product     = wc_get_product( $v['variation_id'] );
+								$v_price_excl  = $v_product ? (float) wc_get_price_excluding_tax( $v_product ) : 0;
+								$v_price_incl  = $v_product ? (float) wc_get_price_including_tax( $v_product ) : 0;
+								$v_purchasable = $v_product && $v_product->is_purchasable() && $v['is_in_stock'] ? '1' : '0';
+								?>
+								<option value="<?php echo absint( $v['variation_id'] ); ?>"
+								        data-price-html="<?php echo esc_attr( $v['price_html'] ); ?>"
+								        data-price-excl="<?php echo esc_attr( $v_price_excl ); ?>"
+								        data-price-incl="<?php echo esc_attr( $v_price_incl ); ?>"
+								        data-stock="<?php echo esc_attr( $v_stock ); ?>"
+								        data-stock-label="<?php echo esc_attr( $v_stock_label ); ?>"
+								        data-sku="<?php echo esc_attr( $v['sku'] ?? '' ); ?>"
+								        data-purchasable="<?php echo esc_attr( $v_purchasable ); ?>"
+								        data-attributes="<?php echo esc_attr( wp_json_encode( $v['attributes'] ) ); ?>">
+									<?php echo esc_html( $v_label ); ?>
+								</option>
+							<?php endforeach; ?>
+						</select>
+					<?php endif; ?>
+				</div>
+			</div>
+
+			<div class="kr-card__bottom">
+				<span class="kr-card__check" aria-hidden="true"></span>
+				<span class="kr-card__stock sijab-acc-card__stock sijab-acc-card__stock--<?php echo esc_attr( $stock_status ); ?>">
+					<?php echo esc_html( $stock_label ); ?>
+				</span>
+				<div class="kr-card__price sijab-acc-card__price"><?php echo $acc->get_price_html(); ?></div>
+			</div>
 		</div>
 		<?php
 	}
@@ -1056,14 +1376,10 @@ class SIJAB_Tillbehor {
 		$is_simple   = $acc->is_type( 'simple' ) && $acc->is_purchasable() && $acc->is_in_stock();
 		$is_variable = $acc->is_type( 'variable' );
 
-		// Stock badge — variable products start empty (updated by JS on variant select).
-		$stock_status = $is_variable ? '' : $acc->get_stock_status();
-		switch ( $stock_status ) {
-			case 'instock':     $stock_label = __( 'I lager', 'sijab-tillbehor' ); break;
-			case 'onbackorder': $stock_label = __( 'Beställningsvara', 'sijab-tillbehor' ); break;
-			case '':            $stock_label = ''; break;
-			default:            $stock_label = __( 'Slut i lager', 'sijab-tillbehor' );
-		}
+		// Filter-aware stock text — variable products start empty (updated by JS on variant select).
+		$stock_display = $this->get_stock_display( $acc );
+		$stock_status  = $stock_display['status'];
+		$stock_label   = $stock_display['label'];
 		?>
 		<div class="sijab-acc-card" data-accessory-id="<?php echo absint( $id ); ?>">
 			<a href="<?php echo esc_url( $link ); ?>" class="sijab-acc-card__image">
@@ -1098,7 +1414,7 @@ class SIJAB_Tillbehor {
 									}
 									$v_label       = ! empty( $attr_parts ) ? implode( ' / ', $attr_parts ) : '#' . $v['variation_id'];
 									$v_stock       = $v['is_in_stock'] ? 'instock' : 'outofstock';
-									$v_stock_label = $v['is_in_stock'] ? __( 'I lager', 'sijab-tillbehor' ) : __( 'Slut i lager', 'sijab-tillbehor' );
+									$v_stock_label = $this->get_variation_stock_label( $v );
 									$v_sku         = $v['sku'] ?? '';
 									?>
 									<option value="<?php echo absint( $v['variation_id'] ); ?>"
@@ -1240,68 +1556,27 @@ class SIJAB_Tillbehor {
 			<div class="options_group">
 				<?php wp_nonce_field( 'sijab_save_accessories', 'sijab_accessories_nonce' ); ?>
 
-				<!-- Sök och lägg till -->
-				<p class="form-field">
-					<label for="sijab_acc_search"><?php esc_html_e( 'Lägg till tillbehör (sök på namn/SKU)', 'sijab-tillbehor' ); ?></label>
-					<select class="wc-product-search" style="width:60%;" id="sijab_acc_search" data-placeholder="<?php esc_attr_e( 'Sök produkter…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="true">
-					</select>
-					<button type="button" class="button" id="sijab_acc_add_btn" style="vertical-align:middle;"><?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?></button>
+				<!-- 1. Sök på namn/SKU -->
+				<p class="form-field sijab-ff">
+					<label for="sijab_acc_search"><?php esc_html_e( 'Sök på namn/SKU', 'sijab-tillbehor' ); ?></label>
+					<span class="sijab-field-wrap">
+						<select class="wc-product-search sijab-acc-field" id="sijab_acc_search" data-placeholder="<?php esc_attr_e( 'Sök produkter…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="true">
+						</select>
+						<button type="button" class="button" id="sijab_acc_add_btn"><?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?></button>
+					</span>
 				</p>
 
-				<p class="form-field">
-					<label for="sijab_accessories_skus"><?php esc_html_e( 'Lägg till via SKU (kommaseparerat)', 'sijab-tillbehor' ); ?></label>
-					<textarea id="sijab_accessories_skus" name="sijab_accessories_skus" rows="2" style="width:60%;" placeholder="EX123, EX456, EX789"></textarea>
+				<!-- 2. Via SKU (kommaseparerat) -->
+				<p class="form-field sijab-ff">
+					<label for="sijab_accessories_skus"><?php esc_html_e( 'Via SKU (kommaseparerat)', 'sijab-tillbehor' ); ?></label>
+					<span class="sijab-field-wrap">
+						<textarea id="sijab_accessories_skus" name="sijab_accessories_skus" rows="2" class="sijab-acc-field" placeholder="EX123, EX456, EX789"></textarea>
+					</span>
 				</p>
 
-				<!-- AI-förslag -->
-				<?php if ( get_option( 'sijab_openai_api_key', '' ) ) : ?>
-				<div class="form-field" style="padding: 5px 20px 10px;">
-					<?php wp_nonce_field( 'sijab_suggest_accessories', 'sijab_suggest_nonce' ); ?>
-					<button type="button" class="button button-secondary" id="sijab_ai_suggest_btn" data-product-id="<?php echo absint( $post->ID ); ?>">
-						✨ <?php esc_html_e( 'Föreslå tillbehör med AI', 'sijab-tillbehor' ); ?>
-					</button>
-					<span id="sijab_ai_spinner" class="spinner" style="float:none; margin-top:0;"></span>
-					<div id="sijab_ai_results" style="display:none; margin-top:12px;">
-						<p style="font-weight:600; margin-bottom:8px;">AI-förslag — välj vilka du vill lägga till:</p>
-						<div id="sijab_ai_results_list"></div>
-						<p style="margin-top:8px;">
-							<button type="button" class="button button-primary" id="sijab_ai_add_selected"><?php esc_html_e( 'Lägg till valda', 'sijab-tillbehor' ); ?></button>
-							<button type="button" class="button" id="sijab_ai_dismiss"><?php esc_html_e( 'Stäng', 'sijab-tillbehor' ); ?></button>
-						</p>
-					</div>
-				</div>
-				<?php endif; ?>
-
-				<!-- Kategori-länk -->
-				<p class="form-field" style="display:flex; align-items:center; flex-wrap:wrap; gap:6px;">
-					<label for="sijab_acc_category" style="flex-shrink:0;"><?php esc_html_e( 'Länka till tillbehörskategori', 'sijab-tillbehor' ); ?></label>
-					<?php
-					$saved_cat = (int) get_post_meta( $post->ID, '_sijab_acc_category_id', true );
-					$categories = get_terms( [
-						'taxonomy'   => 'product_cat',
-						'hide_empty' => false,
-						'orderby'    => 'name',
-					] );
-					?>
-					<select name="sijab_acc_category_id" id="sijab_acc_category" style="width:40%; min-width:200px;">
-						<option value=""><?php esc_html_e( '— Ingen kategori —', 'sijab-tillbehor' ); ?></option>
-						<?php if ( ! is_wp_error( $categories ) ) : foreach ( $categories as $cat ) : ?>
-							<option value="<?php echo absint( $cat->term_id ); ?>" <?php selected( $saved_cat, $cat->term_id ); ?>>
-								<?php echo esc_html( $cat->name ); ?> (<?php echo absint( $cat->count ); ?>)
-							</option>
-						<?php endforeach; endif; ?>
-					</select>
-					<button type="button" class="button" id="sijab_save_category_btn" style="flex-shrink:0;"><?php esc_html_e( 'Spara kategori', 'sijab-tillbehor' ); ?></button>
-					<span id="sijab_cat_status" style="font-size:12px; color:#46b450; display:none;">✓ Sparad</span>
-				</p>
-				<p class="form-field" style="margin-top:-10px;">
-					<label>&nbsp;</label>
-					<span class="description"><?php esc_html_e( 'Visar en "Se alla tillbehör"-länk under tillbehörskorten.', 'sijab-tillbehor' ); ?></span>
-				</p>
-
-				<!-- Sortable lista -->
-				<div class="form-field" style="padding: 5px 20px 10px;">
-					<label style="display:block; margin-bottom:8px;"><?php esc_html_e( 'Tillbehör (dra för att ändra ordning)', 'sijab-tillbehor' ); ?></label>
+				<!-- 3. Tillagda tillbehör (sortable lista) -->
+				<div class="sijab-acc-list-section">
+					<h4 class="sijab-acc-list-heading"><?php esc_html_e( 'Tillagda tillbehör', 'sijab-tillbehor' ); ?> <span class="sijab-acc-list-hint"><?php esc_html_e( '(dra för att ändra ordning)', 'sijab-tillbehor' ); ?></span></h4>
 					<input type="hidden" id="sijab_acc_json" name="sijab_accessories_json" value="<?php echo esc_attr( wp_json_encode( array_values( array_map( 'absint', $saved_ids ) ) ) ); ?>" />
 					<ul id="sijab_acc_sortable" style="margin:0; padding:0; list-style:none;">
 						<?php if ( ! empty( $saved_ids ) ) :
@@ -1322,6 +1597,57 @@ class SIJAB_Tillbehor {
 					</ul>
 					<p id="sijab_acc_empty_msg" style="color:#999; font-style:italic; <?php echo ! empty( $saved_ids ) ? 'display:none;' : ''; ?>"><?php esc_html_e( 'Inga tillbehör tillagda ännu.', 'sijab-tillbehor' ); ?></p>
 				</div>
+
+				<!-- 4. Länka till tillbehörskategori -->
+				<p class="form-field sijab-ff">
+					<label for="sijab_acc_category"><?php esc_html_e( 'Länka till tillbehörskategori', 'sijab-tillbehor' ); ?></label>
+					<span class="sijab-field-wrap">
+						<?php
+						$saved_cat = (int) get_post_meta( $post->ID, '_sijab_acc_category_id', true );
+						$categories = get_terms( [
+							'taxonomy'   => 'product_cat',
+							'hide_empty' => false,
+							'orderby'    => 'name',
+						] );
+						?>
+						<select name="sijab_acc_category_id" id="sijab_acc_category" class="sijab-acc-field">
+							<option value=""><?php esc_html_e( '— Ingen kategori —', 'sijab-tillbehor' ); ?></option>
+							<?php if ( ! is_wp_error( $categories ) ) : foreach ( $categories as $cat ) : ?>
+								<option value="<?php echo absint( $cat->term_id ); ?>" <?php selected( $saved_cat, $cat->term_id ); ?>>
+									<?php echo esc_html( $cat->name ); ?> (<?php echo absint( $cat->count ); ?>)
+								</option>
+							<?php endforeach; endif; ?>
+						</select>
+						<button type="button" class="button" id="sijab_save_category_btn"><?php esc_html_e( 'Spara kategori', 'sijab-tillbehor' ); ?></button>
+						<span id="sijab_cat_status" style="font-size:12px; color:#46b450; display:none; vertical-align:middle;">✓ Sparad</span>
+					</span>
+					<span class="description sijab-field-desc"><?php esc_html_e( 'Visar en "Se alla tillbehör"-länk under tillbehörskorten.', 'sijab-tillbehor' ); ?></span>
+				</p>
+
+				<!-- 5. AI-assistent (längst ner) -->
+				<?php if ( get_option( 'sijab_openai_api_key', '' ) ) : ?>
+				<p class="form-field sijab-ff">
+					<label for="sijab_ai_suggest_btn"><?php esc_html_e( 'AI-assistent', 'sijab-tillbehor' ); ?></label>
+					<span class="sijab-field-wrap">
+						<?php wp_nonce_field( 'sijab_suggest_accessories', 'sijab_suggest_nonce' ); ?>
+						<button type="button" class="button button-secondary sijab-acc-field" id="sijab_ai_suggest_btn" data-product-id="<?php echo absint( $post->ID ); ?>">
+							✨ <?php esc_html_e( 'Föreslå tillbehör med AI', 'sijab-tillbehor' ); ?>
+						</button>
+						<span id="sijab_ai_spinner" class="spinner" style="float:none; margin-top:0; vertical-align:middle;"></span>
+					</span>
+				</p>
+				<div id="sijab_ai_results" class="sijab-acc-fullwidth" style="display:none;">
+					<div style="background:#f6f7f7; border:1px solid #dcdcde; border-radius:4px; padding:12px;">
+						<p style="font-weight:600; margin:0 0 8px;">AI-förslag — välj vilka du vill lägga till:</p>
+						<div id="sijab_ai_results_list"></div>
+						<p style="margin:8px 0 0;">
+							<button type="button" class="button button-primary" id="sijab_ai_add_selected"><?php esc_html_e( 'Lägg till valda', 'sijab-tillbehor' ); ?></button>
+							<button type="button" class="button" id="sijab_ai_dismiss"><?php esc_html_e( 'Stäng', 'sijab-tillbehor' ); ?></button>
+						</p>
+					</div>
+				</div>
+				<?php endif; ?>
+
 			</div>
 		</div>
 		<?php
@@ -1598,7 +1924,92 @@ class SIJAB_Tillbehor {
 				font-style: italic !important;
 			}
 
-			#sijab_accessories_data .form-field label { width: 220px; }
+			/* ===== Tillbehörs-panel: jämn grid-layout ===== */
+			#sijab_accessories_data .options_group { padding: 12px 0 12px; }
+
+			/* Form-field som flex-row: etikett vänster, fältkolumn höger — exakt samma x-start och bredd */
+			#sijab_accessories_data .form-field.sijab-ff {
+				display: flex !important;
+				flex-wrap: wrap;
+				align-items: flex-start;
+				padding: 0 20px !important;
+				margin: 0 0 14px !important;
+				line-height: 30px;
+			}
+			#sijab_accessories_data .form-field.sijab-ff > label {
+				flex: 0 0 200px;
+				width: 200px !important;
+				padding-top: 4px;
+				margin: 0 !important;
+				float: none !important;
+				font-weight: 500;
+			}
+			#sijab_accessories_data .form-field.sijab-ff > .sijab-field-wrap {
+				flex: 0 1 440px;
+				max-width: 440px;
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 6px;
+			}
+			/* Alla fält: exakt samma bredd på första raden */
+			#sijab_accessories_data .sijab-field-wrap > .sijab-acc-field,
+			#sijab_accessories_data .sijab-field-wrap > .select2 {
+				width: 300px !important;
+				min-width: 300px !important;
+				max-width: 300px !important;
+				box-sizing: border-box;
+				vertical-align: middle;
+			}
+			#sijab_accessories_data .sijab-field-wrap > textarea.sijab-acc-field {
+				min-height: 54px;
+			}
+			#sijab_accessories_data .sijab-field-wrap > .button {
+				margin: 0 !important;
+				vertical-align: middle;
+			}
+			/* Beskrivningstext hamnar på egen rad under fältet, indenterat under fältet */
+			#sijab_accessories_data .form-field.sijab-ff > .description,
+			#sijab_accessories_data .form-field.sijab-ff > .sijab-field-desc {
+				flex: 0 0 100%;
+				margin: 6px 0 0 200px;
+				color: #757575;
+				font-size: 12px;
+				font-style: italic;
+			}
+
+			/* AI results — alignerat under fält-kolumnen */
+			#sijab_ai_results {
+				margin: 4px 20px 12px 200px;
+				max-width: 560px;
+			}
+
+			/* Sortable-sektion: egen visuell box mellan SKU-fältet och kategori-fältet */
+			.sijab-acc-list-section {
+				margin: 10px 20px 16px 200px;
+				padding: 14px;
+				background: #f6f7f7;
+				border: 1px solid #dcdcde;
+				border-radius: 6px;
+				max-width: 560px;
+			}
+			.sijab-acc-list-heading {
+				margin: 0 0 10px;
+				font-size: 13px;
+				font-weight: 600;
+				color: #1d2327;
+				text-transform: uppercase;
+				letter-spacing: 0.4px;
+			}
+			.sijab-acc-list-hint {
+				font-weight: 400;
+				font-size: 11px;
+				color: #757575;
+				text-transform: none;
+				letter-spacing: 0;
+				margin-left: 4px;
+			}
+
 			#sijab_acc_sortable { margin: 0; padding: 0; list-style: none; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }
 			#sijab_acc_sortable:empty { border: none; }
 			#sijab_acc_sortable .sijab-acc-sortable-item {
@@ -1687,17 +2098,34 @@ class SIJAB_Tillbehor {
 					return;
 				}
 				var text = sel.find('option:selected').text();
+				// Start with placeholder; swap in real thumb via AJAX below.
 				var li = '<li class=\"sijab-acc-sortable-item\" data-id=\"'+id+'\">'
 					+ '<span class=\"sijab-acc-drag-handle\" title=\"Dra f\\u00f6r att sortera\">\\u2630</span>'
-					+ '<img src=\"" . esc_js( wc_placeholder_img_src( 'thumbnail' ) ) . "\" />'
+					+ '<img class=\"sijab-acc-thumb\" src=\"" . esc_js( wc_placeholder_img_src( 'thumbnail' ) ) . "\" />'
 					+ '<span class=\"sijab-acc-item-name\">' + $('<span>').text(text).html() + '</span>'
 					+ '<a href=\"#\" class=\"sijab-acc-remove\" title=\"Ta bort\">Ta bort</a>'
 					+ '</li>';
-				sortable.append(li);
+				var \$li = $(li);
+				sortable.append(\$li);
 				sortable.sortable('refresh');
 				syncJson();
 				$('#sijab_acc_empty_msg').hide();
 				sel.val(null).trigger('change');
+
+				// Fetch real thumbnail so it shows immediately without a full page save.
+				$.post(ajaxurl, {
+					action: 'sijab_get_product_thumb',
+					nonce: $('#sijab_accessories_nonce').val(),
+					product_id: id
+				}, function(resp){
+					if (resp && resp.success && resp.data && resp.data.thumb) {
+						\$li.find('img.sijab-acc-thumb').attr('src', resp.data.thumb);
+						// Also upgrade the name to the full formatted one.
+						if (resp.data.name) {
+							\$li.find('.sijab-acc-item-name').text(resp.data.name);
+						}
+					}
+				});
 			});
 
 			// Remove item
@@ -2649,6 +3077,37 @@ class SIJAB_Tillbehor {
 		wp_send_json_success( [ 'saved' => true ] );
 	}
 
+	/**
+	 * Return a product's thumbnail URL + formatted name. Used by the admin
+	 * accessory-list "Lägg till"-button to replace the placeholder image with
+	 * the real one immediately after a product is added (without reloading).
+	 */
+	public function ajax_get_product_thumb(): void {
+		check_ajax_referer( 'sijab_save_accessories', 'nonce' );
+
+		$product_id = absint( $_POST['product_id'] ?? 0 );
+		if ( ! $product_id || ! current_user_can( 'edit_products' ) ) {
+			wp_send_json_error( 'Unauthorized' );
+		}
+
+		$product = wc_get_product( $product_id );
+		if ( ! $product ) {
+			wp_send_json_error( 'Product not found' );
+		}
+
+		$thumb = $product->get_image_id()
+			? wp_get_attachment_image_url( $product->get_image_id(), 'thumbnail' )
+			: wc_placeholder_img_src( 'thumbnail' );
+
+		$name = html_entity_decode( wp_strip_all_tags( $product->get_formatted_name() ) );
+
+		wp_send_json_success( [
+			'id'    => $product_id,
+			'thumb' => $thumb,
+			'name'  => $name,
+		] );
+	}
+
 	// ──────────────────────────────────────────────────────────────
 	// Shop: Bundle filter/sorting
 	// ──────────────────────────────────────────────────────────────
@@ -2830,6 +3289,90 @@ class SIJAB_Tillbehor {
 			$msg = ! empty( $notices ) ? wp_strip_all_tags( $notices[0]['notice'] ?? $notices[0] ) : __( 'Kunde inte lägga till i varukorgen.', 'sijab-tillbehor' );
 			wp_send_json_error( [ 'message' => $msg ] );
 		}
+	}
+
+	/**
+	 * AJAX: batch add main product + selected accessories in a single request.
+	 *
+	 * Runs add_to_cart() sequentially in the same PHP process so WC cart-session
+	 * writes can't race against each other. Avoids the "only one accessory added"
+	 * bug caused by parallel AJAX calls, and cuts N+1 round-trips to 1.
+	 */
+	public function ajax_bundle_add_to_cart(): void {
+		$items_raw = isset( $_POST['items'] ) ? wp_unslash( $_POST['items'] ) : '';
+		$items     = json_decode( $items_raw, true );
+
+		if ( ! is_array( $items ) || empty( $items ) ) {
+			wp_send_json_error( [ 'message' => __( 'Inga artiklar skickade.', 'sijab-tillbehor' ) ] );
+		}
+
+		if ( is_null( WC()->cart ) ) {
+			wp_send_json_error( [ 'message' => __( 'Varukorgen är inte tillgänglig.', 'sijab-tillbehor' ) ] );
+		}
+
+		$added_keys = [];
+		$errors     = [];
+
+		foreach ( $items as $item ) {
+			if ( ! is_array( $item ) ) continue;
+
+			$product_id   = absint( $item['product_id'] ?? 0 );
+			$variation_id = absint( $item['variation_id'] ?? 0 );
+			$quantity     = max( 1, absint( $item['quantity'] ?? 1 ) );
+
+			if ( ! $product_id ) continue;
+
+			// Sanitize variation attributes (keys must be attribute_* like WC expects).
+			$variations = [];
+			if ( isset( $item['attributes'] ) && is_array( $item['attributes'] ) ) {
+				foreach ( $item['attributes'] as $key => $value ) {
+					$key = (string) $key;
+					if ( strpos( $key, 'attribute_' ) !== 0 ) continue;
+					$variations[ sanitize_title( wp_unslash( $key ) ) ] = sanitize_text_field( wp_unslash( (string) $value ) );
+				}
+			}
+
+			// Tag accessory lines with parent for order tracking.
+			$parent = absint( $item['parent_id'] ?? 0 );
+			if ( $parent ) {
+				$_REQUEST['sijab_acc_parent'] = $parent;
+			} else {
+				unset( $_REQUEST['sijab_acc_parent'] );
+			}
+
+			$cart_key = WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variations );
+			if ( $cart_key ) {
+				$added_keys[] = $cart_key;
+			} else {
+				$errors[] = $product_id;
+			}
+		}
+
+		unset( $_REQUEST['sijab_acc_parent'] );
+
+		if ( empty( $added_keys ) ) {
+			$notices = wc_get_notices( 'error' );
+			wc_clear_notices();
+			$msg = ! empty( $notices ) ? wp_strip_all_tags( is_array( $notices[0] ) ? ( $notices[0]['notice'] ?? '' ) : $notices[0] ) : __( 'Kunde inte lägga till i varukorgen.', 'sijab-tillbehor' );
+			wp_send_json_error( [ 'message' => $msg, 'errors' => $errors ] );
+		}
+
+		// Clear any leftover non-fatal notices so they don't spill into the next request.
+		wc_clear_notices();
+
+		ob_start();
+		woocommerce_mini_cart();
+		$mini_cart = ob_get_clean();
+
+		wp_send_json_success( [
+			'added'         => count( $added_keys ),
+			'errors'        => $errors,
+			'cart_hash'     => WC()->cart->get_cart_hash(),
+			'cart_quantity' => WC()->cart->get_cart_contents_count(),
+			'fragments'     => apply_filters( 'woocommerce_add_to_cart_fragments', [
+				'div.widget_shopping_cart_content' => '<div class="widget_shopping_cart_content">' . $mini_cart . '</div>',
+			] ),
+		] );
 	}
 
 	// ──────────────────────────────────────────────────────────────

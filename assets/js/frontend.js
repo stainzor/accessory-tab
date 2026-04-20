@@ -1,6 +1,6 @@
 /**
  * Accessory Tab — "Visa alla" toggle + qty selector + add-to-cart sync + stats tracking + checklist total.
- * v2.30.7
+ * v2.31.5 — CTA always goes via runBundleFlow (0-acc case also works).
  */
 (function () {
 	'use strict';
@@ -271,59 +271,244 @@
 		trackEvent(getAccessoryId(link), 'product_click');
 	});
 
-	// ── Checklist: add checked accessories when main add-to-cart is submitted ──
-	// Returns a Promise that resolves when all checked accessories have been added.
-	function addCheckedAccessories() {
-		var checkboxes = document.querySelectorAll('.sijab-checklist__input:checked');
-		if (!checkboxes.length) return Promise.resolve();
+	// ── wcvat-toggle sync ──
+	// Find a "reference" .product-tax-on / .product-tax-off elsewhere on the page
+	// (outside accessories) and copy its computed display value to our targets.
+	function syncTaxDisplay(scope) {
+		if (!scope) scope = document;
+		// Find a reference pair in the main product summary / page (not inside our section).
+		var refOn = null, refOff = null;
+		var candidates = document.querySelectorAll('.product-tax-on, .product-tax-off');
+		for (var i = 0; i < candidates.length; i++) {
+			var c = candidates[i];
+			if (c.closest('.sijab-accessories-section')) continue; // skip our own
+			if (c.classList.contains('product-tax-on') && !refOn) refOn = c;
+			else if (c.classList.contains('product-tax-off') && !refOff) refOff = c;
+			if (refOn && refOff) break;
+		}
+		var onDisplay  = refOn  ? window.getComputedStyle(refOn).display  : '';
+		var offDisplay = refOff ? window.getComputedStyle(refOff).display : '';
 
-		var ajaxUrl = (typeof sijabAccStats !== 'undefined') ? sijabAccStats.ajax_url : '/wp-admin/admin-ajax.php';
-		var parentId = (typeof sijabAccStats !== 'undefined') ? sijabAccStats.parent_id : '';
-
-		var promises = [];
-		checkboxes.forEach(function (cb) {
-			var productId = cb.getAttribute('data-product_id');
-			var body = new FormData();
-			body.append('action', 'sijab_add_to_cart');
-			body.append('product_id', productId);
-			body.append('quantity', '1');
-			if (parentId) body.append('sijab_acc_parent', parentId);
-
-			promises.push(fetch(ajaxUrl, { method: 'POST', body: body }));
-			trackEvent(productId, 'add_to_cart');
-		});
-
-		return Promise.all(promises);
+		var onTargets  = scope.querySelectorAll('.product-tax-on');
+		var offTargets = scope.querySelectorAll('.product-tax-off');
+		if (refOn)  onTargets.forEach(function (el)  { el.style.display = (onDisplay  === 'none') ? 'none' : ''; });
+		if (refOff) offTargets.forEach(function (el) { el.style.display = (offDisplay === 'none') ? 'none' : ''; });
 	}
 
-	// Hook into the WooCommerce add-to-cart form submit.
-	// Prevent default, add accessories first, then re-submit the form.
-	var sijabSubmitting = false;
+	// When wcvat-toggle changes the page tax mode, re-sync all our injected variant prices.
+	function syncAllChecklistTax() {
+		document.querySelectorAll('.sijab-acc-card--checklist .sijab-acc-card__price').forEach(function (priceEl) {
+			if (priceEl.querySelector('.product-tax-on, .product-tax-off')) {
+				syncTaxDisplay(priceEl);
+			}
+		});
+	}
+
+	// ── Checklist: variable product variant selector ──
+	// When a variant is selected, populate the checkbox's data attrs and enable it.
+	document.addEventListener('change', function (e) {
+		var select = e.target.closest('.sijab-checklist__var-select');
+		if (!select) return;
+
+		var row  = select.closest('.sijab-acc-card--checklist');
+		if (!row) return;
+		var cb   = row.querySelector('.sijab-checklist__input');
+		var opt  = select.options[select.selectedIndex];
+		var varId = select.value;
+		var purchasable = varId && opt && opt.getAttribute('data-purchasable') === '1';
+
+		// Update checkbox data attrs for total calc + add-to-cart.
+		if (cb) {
+			if (purchasable) {
+				cb.disabled = false;
+				cb.setAttribute('data-variation_id', varId);
+				cb.setAttribute('data-price-excl', opt.getAttribute('data-price-excl') || '0');
+				cb.setAttribute('data-price-incl', opt.getAttribute('data-price-incl') || '0');
+				cb.setAttribute('data-variation-attributes', opt.getAttribute('data-attributes') || '{}');
+			} else {
+				cb.disabled = true;
+				cb.checked = false;
+				cb.setAttribute('data-variation_id', '');
+				cb.setAttribute('data-price-excl', '0');
+				cb.setAttribute('data-price-incl', '0');
+			}
+		}
+
+		// Update row price display + stock badge.
+		var priceEl = row.querySelector('.sijab-acc-card__price');
+		var priceHtml = opt ? opt.getAttribute('data-price-html') : '';
+		if (priceEl && priceHtml) {
+			priceEl.innerHTML = priceHtml;
+			// wcvat-toggle has already set display state on existing .product-tax-on/off
+			// elements on the page. Mirror that state into our injected HTML.
+			syncTaxDisplay(priceEl);
+		}
+
+		var stockEl = row.querySelector('.sijab-acc-card__stock');
+		var stockStatus = opt ? opt.getAttribute('data-stock') || '' : '';
+		var stockLabel  = opt ? opt.getAttribute('data-stock-label') || '' : '';
+		if (stockEl) {
+			stockEl.className = 'sijab-acc-card__stock' + (stockStatus ? ' sijab-acc-card__stock--' + stockStatus : '');
+			stockEl.textContent = stockLabel;
+		}
+
+		// Recalc total in case this row was already checked.
+		updateChecklistTotal();
+	});
+
+	// ── Bundle add-to-cart: ONE request with main + all checked accessories ──
+	// Server-side adds items sequentially in the same PHP process → no race
+	// conditions on WC cart-session, and only a single round-trip.
+	function buildBundleItems(form) {
+		var items = [];
+
+		// 1) Main product from form.cart fields.
+		// NOTE: FormData(form) does NOT include submit button name/value unless that
+		// button was the submitter. With form.requestSubmit() (no submitter arg),
+		// the `add-to-cart` name/value on <button> is missing → read it manually.
+		var fd = new FormData(form);
+		var mainPid = parseInt(fd.get('add-to-cart') || fd.get('product_id') || 0, 10) || 0;
+		if (!mainPid) {
+			var atcBtn = form.querySelector('button[name="add-to-cart"], input[name="add-to-cart"]');
+			if (atcBtn && atcBtn.value) mainPid = parseInt(atcBtn.value, 10) || 0;
+		}
+		// Fallback to global product id exposed by PHP via sijabAccStats.
+		if (!mainPid && typeof sijabAccStats !== 'undefined' && sijabAccStats.parent_id) {
+			mainPid = parseInt(sijabAccStats.parent_id, 10) || 0;
+		}
+		var mainVarId = parseInt(fd.get('variation_id') || 0, 10) || 0;
+		var mainQty = parseInt(fd.get('quantity') || 1, 10) || 1;
+
+		var mainAttrs = {};
+		fd.forEach(function (v, k) {
+			if (typeof k === 'string' && k.indexOf('attribute_') === 0) {
+				mainAttrs[k] = v;
+			}
+		});
+
+		if (mainPid) {
+			items.push({
+				product_id:   mainPid,
+				variation_id: mainVarId,
+				quantity:     mainQty,
+				attributes:   mainAttrs
+				// no parent_id on main → not tagged as accessory
+			});
+		}
+
+		// 2) All checked accessories.
+		var parentId = (typeof sijabAccStats !== 'undefined' && sijabAccStats.parent_id)
+			? parseInt(sijabAccStats.parent_id, 10)
+			: mainPid;
+
+		document.querySelectorAll('.sijab-checklist__input:checked').forEach(function (cb) {
+			var pid = parseInt(cb.getAttribute('data-product_id'), 10);
+			if (!pid) return;
+
+			var item = {
+				product_id: pid,
+				quantity:   1,
+				parent_id:  parentId
+			};
+
+			if (cb.getAttribute('data-is-variable') === '1') {
+				var varId = parseInt(cb.getAttribute('data-variation_id'), 10) || 0;
+				if (varId) {
+					item.variation_id = varId;
+					try {
+						item.attributes = JSON.parse(cb.getAttribute('data-variation-attributes') || '{}');
+					} catch (err) {}
+				}
+			}
+
+			items.push(item);
+			trackEvent(pid, 'add_to_cart');
+		});
+
+		return items;
+	}
+
+	// Perform the batch add-to-cart flow. Shared by (a) native form.cart submit
+	// when any accessory is checked, and (b) the dedicated cards-layout CTA which
+	// always uses this path so main product is included reliably (form.requestSubmit()
+	// without a submitter does NOT include the add-to-cart button's name/value).
+	function runBundleFlow(form) {
+		// Disable submit button (and CTA if present) to prevent double-clicks.
+		var btn = form.querySelector('[type="submit"]');
+		var cta = document.querySelector('.kr-bundle-cta');
+		var origOpacity = btn ? btn.style.opacity : '';
+		var origCtaText = cta ? cta.textContent : '';
+		if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; }
+		if (cta) {
+			cta.disabled = true;
+			cta.classList.add('kr-bundle-cta--loading');
+			cta.textContent = 'Lägger till…';
+		}
+
+		function restoreBtn() {
+			if (btn) { btn.disabled = false; btn.style.opacity = origOpacity; }
+			if (cta) {
+				cta.disabled = false;
+				cta.classList.remove('kr-bundle-cta--loading');
+				// Let updateCtaLabel recompute the correct label based on current
+				// checkbox state (after success, accessories are unchecked → default
+				// label; after failure, they're still checked → bundle label).
+				if (typeof updateCtaLabel === 'function') updateCtaLabel();
+				else cta.textContent = origCtaText;
+			}
+		}
+
+		var items = buildBundleItems(form);
+		if (!items.length) { restoreBtn(); return; }
+
+		var ajaxUrl = (typeof sijabAccStats !== 'undefined' && sijabAccStats.ajax_url)
+			? sijabAccStats.ajax_url
+			: '/wp-admin/admin-ajax.php';
+
+		var body = new FormData();
+		body.append('action', 'sijab_bundle_add_to_cart');
+		body.append('items', JSON.stringify(items));
+
+		fetch(ajaxUrl, { method: 'POST', body: body, credentials: 'same-origin' })
+			.then(function (r) { return r.json().catch(function () { return {}; }); })
+			.then(function (res) {
+				if (res && res.success) {
+					var data = res.data || {};
+					if (window.jQuery) {
+						var $ = window.jQuery;
+						$(document.body).trigger('wc_fragment_refresh');
+						$(document.body).trigger('added_to_cart', [data.fragments, data.cart_hash, $(btn || cta)]);
+					}
+					// Uncheck accessories so a second click doesn't re-add them.
+					document.querySelectorAll('.sijab-checklist__input:checked').forEach(function (cb) {
+						cb.checked = false;
+						syncCardActiveState(cb);
+					});
+					if (typeof updateChecklistTotal === 'function') updateChecklistTotal();
+				} else {
+					var msg = (res && res.data && res.data.message) ? res.data.message : 'Kunde inte lägga till i varukorgen';
+					if (cta) cta.textContent = msg;
+					else if (btn && btn.tagName === 'BUTTON') btn.textContent = msg;
+					setTimeout(restoreBtn, 2500);
+					return;
+				}
+				restoreBtn();
+			})
+			.catch(function () {
+				restoreBtn();
+			});
+	}
+
+	// Native form.cart submit: hijack ONLY when accessories are checked.
+	// With 0 accessories, let WooCommerce handle submit natively (works correctly
+	// because the real submit button is the submitter → add-to-cart name/value included).
 	document.addEventListener('submit', function (e) {
 		var form = e.target.closest('form.cart');
 		if (!form) return;
-		if (sijabSubmitting) return; // Already re-submitting after accessories added.
-
 		var checked = document.querySelectorAll('.sijab-checklist__input:checked');
-		if (!checked.length) return; // No accessories checked, let form submit normally.
-
+		if (!checked.length) return;
 		e.preventDefault();
-
-		// Disable button to prevent double-clicks.
-		var btn = form.querySelector('[type="submit"]');
-		if (btn) {
-			btn.disabled = true;
-			btn.style.opacity = '0.6';
-		}
-
-		addCheckedAccessories().then(function () {
-			sijabSubmitting = true;
-			form.submit();
-		}).catch(function () {
-			// If accessories fail, still submit the main product.
-			sijabSubmitting = true;
-			form.submit();
-		});
+		runBundleFlow(form);
 	});
 
 	// ── Checklist total: live-updated sum of main product (× qty) + checked accessories ──
@@ -401,7 +586,8 @@
 		var mainPrice = parseFloat(totalBox.getAttribute(mainAttr)) || 0;
 
 		var qty = getMainQty();
-		var sum = mainPrice * qty;
+		var mainSum = mainPrice * qty;
+		var accSum = 0;
 
 		var priceAttr = mode === 'incl' ? 'data-price-incl' : 'data-price-excl';
 		var checked = document.querySelectorAll('.sijab-checklist__input:checked');
@@ -409,8 +595,10 @@
 			var p = parseFloat(cb.getAttribute(priceAttr));
 			// Fallback to legacy single attribute.
 			if (isNaN(p)) p = parseFloat(cb.getAttribute('data-price')) || 0;
-			sum += p;
+			accSum += p;
 		});
+
+		var sum = mainSum + accSum;
 
 		var valueEl  = totalBox.querySelector('.sijab-checklist__total-value');
 		var suffixEl = totalBox.querySelector('.sijab-checklist__total-suffix');
@@ -419,14 +607,162 @@
 			var lbl = mode === 'incl' ? totalBox.getAttribute('data-label-incl') : totalBox.getAttribute('data-label-excl');
 			suffixEl.textContent = lbl || '';
 		}
+
+		// Cards-layout breakdown rows (only present when layout='cards').
+		var productCell = totalBox.querySelector('.kr-bundle-total__product');
+		if (productCell) productCell.innerHTML = formatPrice(mainSum, totalBox);
+		var accCell = totalBox.querySelector('.kr-bundle-total__accessories');
+		if (accCell) accCell.innerHTML = formatPrice(accSum, totalBox);
+
+		// Cards-layout CTA: dynamic label + empty-state on summary box.
+		updateCtaLabel();
 	}
 
-	// Watch the main product price for changes (tax toggle flip) and recalculate.
+	// Update the cards-layout CTA button label based on how many accessories
+	// are checked. 0 → "Lägg i varukorgen" (standard single-product add). 1+ →
+	// "Lägg paket i varukorgen (X produkter)" where X = 1 main + N accessories.
+	// Also toggles data-empty on .kr-bundle-summary so CSS can hide the
+	// meaningless "0 kr tillbehör / Totalt == huvudpris" rows.
+	function updateCtaLabel() {
+		var cta = document.querySelector('.kr-bundle-cta');
+		if (!cta) return;
+		// Don't stomp on the loading label mid-request.
+		if (cta.classList.contains('kr-bundle-cta--loading')) return;
+
+		var checked = document.querySelectorAll('.sijab-checklist__input:checked');
+		var n = checked.length;
+
+		var labelDefault  = cta.getAttribute('data-label-default')  || 'Lägg i varukorgen';
+		var labelBundle   = cta.getAttribute('data-label-bundle')   || 'Lägg paket i varukorgen';
+		var labelProducts = cta.getAttribute('data-label-products') || 'produkter';
+
+		if (n === 0) {
+			cta.textContent = labelDefault;
+		} else {
+			// Total = 1 main product + N accessories.
+			var total = 1 + n;
+			cta.textContent = labelBundle + ' (' + total + ' ' + labelProducts + ')';
+		}
+
+		var summary = document.querySelector('.kr-bundle-summary');
+		if (summary) {
+			if (n === 0) summary.setAttribute('data-empty', '1');
+			else summary.removeAttribute('data-empty');
+		}
+	}
+
+	// ── Cards layout: toggle checkbox on card click + keep .kr-card--active in sync ──
+	function syncCardActiveState(cb) {
+		var card = cb.closest('.kr-card');
+		if (!card) return;
+		card.classList.toggle('kr-card--active', !!cb.checked);
+	}
+
+	document.addEventListener('click', function (e) {
+		var card = e.target.closest('.kr-card');
+		if (!card) return;
+		if (card.classList.contains('kr-card--disabled')) return;
+
+		// Don't hijack clicks on interactive children — they handle themselves.
+		if (e.target.closest('select, option, a, input, button, label')) return;
+
+		var cb = card.querySelector('.kr-card__input');
+		if (!cb || cb.disabled) return;
+
+		cb.checked = !cb.checked;
+		// Dispatch change so existing listeners (updateChecklistTotal) fire.
+		cb.dispatchEvent(new Event('change', { bubbles: true }));
+	});
+
+	// Sync active class whenever a .kr-card__input changes (from any source).
+	document.addEventListener('change', function (e) {
+		if (e.target && e.target.classList && e.target.classList.contains('kr-card__input')) {
+			syncCardActiveState(e.target);
+		}
+	});
+
+	// Cards layout: dedicated CTA button.
+	// ALWAYS goes through runBundleFlow so main product is included even when no
+	// accessories are checked. (form.requestSubmit() would NOT include the submit
+	// button's name/value, causing WC to drop the main product.)
+	document.addEventListener('click', function (e) {
+		var cta = e.target.closest('.kr-bundle-cta');
+		if (!cta || cta.disabled) return;
+		e.preventDefault();
+		var form = document.querySelector('form.cart');
+		if (!form) return;
+		runBundleFlow(form);
+	});
+
+	// Watch for tax toggle flip. Many plugins toggle a class on <body> or <html>,
+	// which changes CSS visibility of dual price elements without mutating DOM.
+	// So we observe attribute changes on body/html AND listen for clicks on likely toggle links.
 	function observeMainPrice() {
+		if (typeof MutationObserver === 'undefined') return;
+
 		var priceWrap = document.querySelector('.product .summary .price, .product .summary p.price, .product-info .price');
-		if (!priceWrap || typeof MutationObserver === 'undefined') return;
-		var obs = new MutationObserver(function () { updateChecklistTotal(); });
-		obs.observe(priceWrap, { childList: true, subtree: true, characterData: true });
+		if (priceWrap) {
+			// Watch BOTH childList/characterData AND attribute changes on descendants.
+			// Some tax-toggle plugins (e.g. wcvat-toggle) swap `.product-tax-on`/`.product-tax-off`
+			// classes on `.amount` parent elements to switch visibility — that's an attribute change.
+			new MutationObserver(function () {
+				updateChecklistTotal();
+				syncAllChecklistTax();
+			}).observe(priceWrap, {
+				childList: true,
+				subtree: true,
+				characterData: true,
+				attributes: true,
+				attributeFilter: ['class', 'style']
+			});
+		}
+
+		// Watch body + html class/attribute changes.
+		var attrObs = new MutationObserver(function () {
+			// Defer to next frame so CSS has applied.
+			requestAnimationFrame(function () {
+				updateChecklistTotal();
+				syncAllChecklistTax();
+			});
+		});
+		attrObs.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-tax-display'] });
+		attrObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-tax-display'] });
+
+		// Watch every .product-tax element (wcvat-toggle pattern) directly so class swaps are caught.
+		var taxEls = document.querySelectorAll('.product-tax, .product-tax-on, .product-tax-off');
+		taxEls.forEach(function (el) {
+			if (el.closest('.sijab-accessories-section')) return; // skip our injected ones (mirror only)
+			new MutationObserver(function () {
+				requestAnimationFrame(function () {
+					updateChecklistTotal();
+					syncAllChecklistTax();
+				});
+			}).observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
+		});
+
+		// Delegated click on anything that looks like a tax toggle.
+		document.addEventListener('click', function (e) {
+			var t = e.target;
+			if (!t) return;
+			var txt = (t.textContent || '').toLowerCase();
+			var href = (t.getAttribute && t.getAttribute('href')) || '';
+			if (
+				/\b(inkl|exkl|incl|excl)\b.*(moms|vat|tax)/i.test(txt) ||
+				/\b(moms|vat|tax)\b/i.test(txt) && /\b(inkl|exkl|incl|excl|toggle)\b/i.test(txt + ' ' + href) ||
+				t.classList && (t.classList.contains('tax-toggle') || t.classList.contains('tax-switch'))
+			) {
+				// Recheck a few times to catch post-click class change.
+				setTimeout(updateChecklistTotal, 50);
+				setTimeout(updateChecklistTotal, 250);
+				setTimeout(updateChecklistTotal, 700);
+			}
+		}, true);
+
+		// Fallback safety net: also react to custom events some plugins emit.
+		['tax-toggle-changed', 'wc-tax-display-changed', 'prices-toggled'].forEach(function (name) {
+			document.addEventListener(name, updateChecklistTotal);
+			window.addEventListener(name, updateChecklistTotal);
+		});
 	}
 
 	// Update on checkbox change.
@@ -453,6 +789,10 @@
 		initMobileToggle();
 		updateChecklistTotal();
 		observeMainPrice();
+		// Re-check a few times in case tax-toggle plugins apply visibility after our init.
+		setTimeout(updateChecklistTotal, 100);
+		setTimeout(updateChecklistTotal, 500);
+		setTimeout(updateChecklistTotal, 1500);
 	}
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', initAll);
