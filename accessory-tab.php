@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.31.11
+ * Version: 2.31.12
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.31.11';
+	const VERSION       = '2.31.12';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -3694,11 +3694,11 @@ class SIJAB_Tillbehor {
 					<table class="widefat striped" style="margin:0;">
 						<thead>
 							<tr>
-								<th>Tillbehör</th>
-								<th>Köp</th>
-								<th>Varukorg</th>
-								<th>Visa produkt</th>
-								<th>Produktklick</th>
+								<th style="text-align:left;">Tillbehör</th>
+								<th style="text-align:right; width:90px;">Köp</th>
+								<th style="text-align:right; width:90px;">Varukorg</th>
+								<th style="text-align:right; width:110px;">Visa produkt</th>
+								<th style="text-align:right; width:110px;">Produktklick</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -3708,11 +3708,11 @@ class SIJAB_Tillbehor {
 								$acc_url  = $acc ? get_edit_post_link( $row->accessory_product_id ) : '';
 							?>
 							<tr>
-								<td><?php echo $acc_url ? '<a href="' . esc_url( $acc_url ) . '">' . esc_html( $acc_name ) . '</a>' : esc_html( $acc_name ); ?></td>
-								<td><strong style="color:#2e7d32;"><?php echo number_format_i18n( (int) $row->purchases ); ?></strong></td>
-								<td><?php echo number_format_i18n( (int) $row->atc ); ?></td>
-								<td><?php echo number_format_i18n( (int) $row->vp ); ?></td>
-								<td><?php echo number_format_i18n( (int) $row->pc ); ?></td>
+								<td style="text-align:left;"><?php echo $acc_url ? '<a href="' . esc_url( $acc_url ) . '">' . esc_html( $acc_name ) . '</a>' : esc_html( $acc_name ); ?></td>
+								<td style="text-align:right; font-variant-numeric: tabular-nums;"><strong style="color:#2e7d32;"><?php echo number_format_i18n( (int) $row->purchases ); ?></strong></td>
+								<td style="text-align:right; font-variant-numeric: tabular-nums;"><?php echo number_format_i18n( (int) $row->atc ); ?></td>
+								<td style="text-align:right; font-variant-numeric: tabular-nums;"><?php echo number_format_i18n( (int) $row->vp ); ?></td>
+								<td style="text-align:right; font-variant-numeric: tabular-nums;"><?php echo number_format_i18n( (int) $row->pc ); ?></td>
 							</tr>
 							<?php endforeach; ?>
 						</tbody>
