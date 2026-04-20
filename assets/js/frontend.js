@@ -862,7 +862,7 @@
 		var btnAccept = document.createElement('button');
 		btnAccept.type = 'button';
 		btnAccept.className = 'sijab-companion-modal__btn sijab-companion-modal__btn--primary';
-		btnAccept.textContent = 'Lägg till båda';
+		btnAccept.textContent = 'Lägg till alla';
 		btnAccept.addEventListener('click', function () {
 			overlay.remove();
 			onAccept && onAccept();
@@ -956,6 +956,13 @@
 			: '/wp-admin/admin-ajax.php';
 
 		var items = [];
+		// Main product — only added if not already in cart (server-side check).
+		// Rationale: customer on the tank product page clicking accessory's
+		// "LÄGG TILL" plus confirming the popup has signalled "I want this
+		// combo to work" — which only makes sense with the main tank included.
+		if (mainId) {
+			items.push({ product_id: mainId, quantity: 1, skip_if_in_cart: true });
+		}
 		items.push({ product_id: accId, quantity: 1, parent_id: mainId });
 		companions.forEach(function (c) {
 			items.push({ product_id: c.id, quantity: c.qty || 1, parent_id: mainId });

@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.32.2
+ * Version: 2.32.3
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -33,7 +33,7 @@ class SIJAB_Tillbehor {
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
 	const REQ_META      = '_sijab_accessory_requirements';  // [ ['accessory_id'=>X, 'requires'=>[['product_id'=>Y,'qty'=>1],...]], ... ]
-	const VERSION       = '2.32.2';
+	const VERSION       = '2.32.3';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -3656,6 +3656,25 @@ class SIJAB_Tillbehor {
 					$key = (string) $key;
 					if ( strpos( $key, 'attribute_' ) !== 0 ) continue;
 					$variations[ sanitize_title( wp_unslash( $key ) ) ] = sanitize_text_field( wp_unslash( (string) $value ) );
+				}
+			}
+
+			// skip_if_in_cart: skip adding this item if it's already in the cart
+			// (same product_id + variation_id match). Used for the main-product
+			// auto-include in horizontal-layout popup flow — we want the tank
+			// added when customer first triggers the popup, but NOT duplicated
+			// if they trigger it a second time from another accessory.
+			if ( ! empty( $item['skip_if_in_cart'] ) ) {
+				$already_in_cart = false;
+				foreach ( WC()->cart->get_cart() as $cart_item ) {
+					if ( (int) ( $cart_item['product_id'] ?? 0 ) === $product_id
+					     && (int) ( $cart_item['variation_id'] ?? 0 ) === $variation_id ) {
+						$already_in_cart = true;
+						break;
+					}
+				}
+				if ( $already_in_cart ) {
+					continue;  // skip — don't re-add
 				}
 			}
 
