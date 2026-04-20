@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.31.10
+ * Version: 2.31.11
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,7 +32,7 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.31.10';
+	const VERSION       = '2.31.11';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -104,13 +104,20 @@ class SIJAB_Tillbehor {
 		add_action( 'woocommerce_order_status_completed', [ $this, 'record_accessory_purchases' ] );
 		add_action( 'woocommerce_order_status_processing', [ $this, 'record_accessory_purchases' ] );
 
-		// Bundle → order: add component line items AFTER payment so Svea Checkout is not disrupted.
-		add_action( 'woocommerce_order_status_processing', [ $this, 'add_bundle_component_lines' ], 5, 1 );
-		add_action( 'woocommerce_order_status_completed', [ $this, 'add_bundle_component_lines' ], 5, 1 );
-		add_action( 'woocommerce_payment_complete', [ $this, 'add_bundle_component_lines' ], 10, 1 );
+		// Bundle → order: add component line items only after the order has
+		// reached 'completed' status. We previously also hooked 'processing'
+		// and 'payment_complete', but those fire while Svea Checkout is still
+		// finalizing the order — and our destructive remove+re-add pattern
+		// changed order-item IDs mid-flow, which could leave the order in a
+		// limbo state (Svea callback lookups failing against new IDs).
+		// Only 'completed' is safe: by then Svea is fully done with the order.
+		add_action( 'woocommerce_order_status_completed', [ $this, 'add_bundle_component_lines' ], 20, 1 );
 
 		// Prevent stock reduction for bundle component lines (return qty 0).
 		add_filter( 'woocommerce_order_item_quantity', [ $this, 'zero_component_stock_qty' ], 10, 3 );
+
+		// Hide internal plugin meta from admin order UI / customer emails.
+		add_filter( 'woocommerce_hidden_order_itemmeta', [ $this, 'hide_internal_item_meta' ] );
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -3742,6 +3749,18 @@ class SIJAB_Tillbehor {
 		return $qty;
 	}
 
+	/**
+	 * Hide our internal plugin meta keys from the admin order item UI
+	 * and customer-facing emails. These are implementation details that
+	 * shouldn't be visible to shop managers or customers.
+	 */
+	public function hide_internal_item_meta( array $hidden ): array {
+		$hidden[] = '_sijab_acc_parent';
+		$hidden[] = '_sijab_bundled_by';
+		$hidden[] = '_sijab_bundle_components_added';
+		return $hidden;
+	}
+
 	public function add_bundle_component_lines( $order_id ): void {
 		$order = wc_get_order( $order_id );
 		if ( ! $order ) return;
@@ -3749,80 +3768,51 @@ class SIJAB_Tillbehor {
 		// Prevent double-firing if multiple hooks trigger for the same order.
 		if ( $order->get_meta( '_sijab_bundle_components_added' ) ) return;
 
-		// 1. Collect existing items and build ordered list with components after parents.
-		$ordered = [];
-		$has_bundles = false;
+		// Collect bundle components that need to be added. We deliberately
+		// DO NOT mutate existing line items (which would change their IDs and
+		// confuse payment-provider callbacks, e.g. Svea Checkout that tracks
+		// order rows via _svea_co_cart_key). Components are simply appended
+		// at the end of the order; the visual ordering (parent → component)
+		// is sacrificed in exchange for transactional safety.
+		$components_to_add = [];
 
 		foreach ( $order->get_items() as $item_id => $item ) {
-			$ordered[] = [
-				'type'         => 'existing',
-				'product_id'   => $item->get_product_id(),
-				'variation_id' => $item->get_variation_id(),
-				'name'         => $item->get_name(),
-				'quantity'     => $item->get_quantity(),
-				'subtotal'     => $item->get_subtotal(),
-				'total'        => $item->get_total(),
-				'tax_class'    => $item->get_tax_class(),
-				'taxes'        => $item->get_taxes(),
-				'meta'         => $item->get_meta_data(),
-			];
+			// Skip if this item is already a component (don't recurse).
+			if ( $item->get_meta( '_sijab_bundled_by' ) ) continue;
 
 			$product_id = $item->get_product_id();
+			if ( ! $product_id ) continue;
 			if ( ! get_post_meta( $product_id, self::BUNDLE_FLAG, true ) ) continue;
 
 			$bundle_items = $this->get_bundle_items( $product_id );
 			if ( empty( $bundle_items ) ) continue;
 
-			$has_bundles = true;
-			$parent_qty  = $item->get_quantity();
+			$parent_qty = $item->get_quantity();
 
 			foreach ( $bundle_items as $bi ) {
 				$component = wc_get_product( $bi['product_id'] );
 				if ( ! $component ) continue;
 
-				$qty = absint( $bi['qty_default'] ?? 1 ) * $parent_qty;
-				$ordered[] = [
-					'type'       => 'component',
+				$components_to_add[] = [
 					'product'    => $component,
-					'qty'        => $qty,
+					'qty'        => absint( $bi['qty_default'] ?? 1 ) * $parent_qty,
 					'bundled_by' => $product_id,
 				];
 			}
 		}
 
-		if ( ! $has_bundles ) return;
+		if ( empty( $components_to_add ) ) return;
 
-		// 2. Remove all existing line items.
-		foreach ( $order->get_items() as $item_id => $item ) {
-			$order->remove_item( $item_id );
-		}
-		$order->save();
-
-		// 3. Re-add in correct order: parent → components → next item → …
-		foreach ( $ordered as $data ) {
+		// Append component lines. Existing items are untouched — their IDs
+		// and all meta (_svea_co_cart_key, etc.) stay intact.
+		foreach ( $components_to_add as $data ) {
 			$line = new \WC_Order_Item_Product();
-
-			if ( $data['type'] === 'existing' ) {
-				$line->set_product_id( $data['product_id'] );
-				$line->set_variation_id( $data['variation_id'] );
-				$line->set_name( $data['name'] );
-				$line->set_quantity( $data['quantity'] );
-				$line->set_subtotal( $data['subtotal'] );
-				$line->set_total( $data['total'] );
-				$line->set_tax_class( $data['tax_class'] );
-				$line->set_taxes( $data['taxes'] );
-				foreach ( $data['meta'] as $meta ) {
-					$line->add_meta_data( $meta->key, $meta->value, true );
-				}
-			} else {
-				$line->set_product( $data['product'] );
-				$line->set_name( '↳ ' . $data['product']->get_name() );
-				$line->set_quantity( $data['qty'] );
-				$line->set_subtotal( 0 );
-				$line->set_total( 0 );
-				$line->add_meta_data( '_sijab_bundled_by', $data['bundled_by'], true );
-			}
-
+			$line->set_product( $data['product'] );
+			$line->set_name( '↳ ' . $data['product']->get_name() );
+			$line->set_quantity( $data['qty'] );
+			$line->set_subtotal( 0 );
+			$line->set_total( 0 );
+			$line->add_meta_data( '_sijab_bundled_by', $data['bundled_by'], true );
 			$order->add_item( $line );
 		}
 
