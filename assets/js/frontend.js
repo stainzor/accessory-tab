@@ -811,7 +811,57 @@
 	window.sijabPendingCompanions = window.sijabPendingCompanions || {};
 	var sessionDismissedCompanions = {};  // accessory_id -> true
 
-	function buildCompanionModal(accessoryName, mainProductName, companions, onAccept, onReject) {
+	// Render a single product row inside the popup. `role` controls the small
+	// badge displayed on the right (main=Huvudprodukt, self=Ditt val, required=Krävs för att passa).
+	function buildCompanionRow(product, role) {
+		var li = document.createElement('li');
+		li.className = 'sijab-companion-modal__item sijab-companion-modal__item--' + role;
+
+		var img = document.createElement('img');
+		img.src = product.image || '';
+		img.className = 'sijab-companion-modal__img';
+		img.alt = product.name;
+
+		var info = document.createElement('div');
+		info.className = 'sijab-companion-modal__info';
+
+		var name = document.createElement('div');
+		name.className = 'sijab-companion-modal__name';
+		name.textContent = product.name;
+		info.appendChild(name);
+
+		var meta = document.createElement('div');
+		meta.className = 'sijab-companion-modal__meta';
+		var metaHtml = (product.price_html || '');
+		if (product.stock_label) {
+			if (metaHtml) metaHtml += ' &middot; ';
+			metaHtml += '<span class="sijab-companion-modal__stock sijab-companion-modal__stock--' +
+				(product.stock_status || '') + '">' + product.stock_label + '</span>';
+		}
+		meta.innerHTML = metaHtml;
+		info.appendChild(meta);
+
+		var badgeLabels = {
+			'main':     'Huvudprodukt',
+			'self':     'Ditt val',
+			'required': 'Krävs för att passa'
+		};
+		var badgeText = badgeLabels[role] || '';
+		if (badgeText) {
+			var badge = document.createElement('span');
+			badge.className = 'sijab-companion-modal__badge sijab-companion-modal__badge--' + role;
+			badge.textContent = badgeText;
+			info.appendChild(badge);
+		}
+
+		li.appendChild(img);
+		li.appendChild(info);
+		return li;
+	}
+
+	function buildCompanionModal(accessoryName, mainProductName, companions, onAccept, onReject, opts) {
+		opts = opts || {};
+
 		// Remove any existing modal first
 		var existing = document.querySelector('.sijab-companion-modal-overlay');
 		if (existing) existing.remove();
@@ -829,31 +879,20 @@
 		var list = document.createElement('ul');
 		list.className = 'sijab-companion-modal__list';
 
+		// Optional: main product row (horizontal-layout popup only — signals that
+		// the tank will be auto-added to cart if not already there).
+		if (opts.mainInfo) {
+			list.appendChild(buildCompanionRow(opts.mainInfo, 'main'));
+		}
+
+		// Optional: the accessory the customer clicked/checked — so they see
+		// exactly what's being added, not just the required companion.
+		if (opts.selfInfo) {
+			list.appendChild(buildCompanionRow(opts.selfInfo, 'self'));
+		}
+
 		companions.forEach(function (c) {
-			var li = document.createElement('li');
-			li.className = 'sijab-companion-modal__item';
-
-			var img = document.createElement('img');
-			img.src = c.image || '';
-			img.className = 'sijab-companion-modal__img';
-			img.alt = c.name;
-
-			var info = document.createElement('div');
-			info.className = 'sijab-companion-modal__info';
-			var name = document.createElement('div');
-			name.className = 'sijab-companion-modal__name';
-			name.textContent = c.name;
-			info.appendChild(name);
-
-			var meta = document.createElement('div');
-			meta.className = 'sijab-companion-modal__meta';
-			meta.innerHTML = (c.price_html || '') + ' &middot; <span class="sijab-companion-modal__stock sijab-companion-modal__stock--' +
-				(c.stock_status || '') + '">' + (c.stock_label || '') + '</span>';
-			info.appendChild(meta);
-
-			li.appendChild(img);
-			li.appendChild(info);
-			list.appendChild(li);
+			list.appendChild(buildCompanionRow(c, 'required'));
 		});
 
 		var actions = document.createElement('div');
@@ -928,13 +967,15 @@
 		e.preventDefault();
 		e.stopPropagation();
 
-		// Accessory name from the card
-		var card = btn.closest('.sijab-acc-card, .kr-card');
-		var nameEl = card ? card.querySelector('.sijab-acc-card__name, .kr-card__name') : null;
-		var accessoryName = nameEl ? nameEl.textContent.trim() : 'tillbehöret';
+		// Extract accessory info from its card DOM for the popup row.
+		var selfInfo = extractAccessoryInfo(btn);
+		var accessoryName = selfInfo.name || 'tillbehöret';
 
 		var h1 = document.querySelector('.product .summary h1, .product_title, h1.product_title');
 		var mainProductName = h1 ? h1.textContent.trim() : '';
+
+		// Main product info from the global emitted by PHP.
+		var mainInfo = (window.sijabMainProductInfo || {})[mainId] || null;
 
 		buildCompanionModal(accessoryName, mainProductName, companions,
 			// Accept: atomic bundle add-to-cart (accessory + all companions)
@@ -946,9 +987,35 @@
 				sessionDismissedCompanions[accId] = true;
 				btn.setAttribute('data-sijab-bypass-popup', '1');
 				btn.click();
-			}
+			},
+			{ selfInfo: selfInfo, mainInfo: mainInfo }
 		);
 	}, true);
+
+	// Pull name/image/price_html/stock from an accessory's card DOM. Used to
+	// render the "Ditt val"-row in the popup — we don't want to round-trip
+	// server-side for data that's already visible on the page.
+	function extractAccessoryInfo(el) {
+		var card = el.closest('.sijab-acc-card, .kr-card');
+		if (!card) return { name: '', image: '', price_html: '', stock_label: '', stock_status: '' };
+		var nameEl   = card.querySelector('.sijab-acc-card__name, .kr-card__name');
+		var imgEl    = card.querySelector('img');
+		var priceEl  = card.querySelector('.sijab-acc-card__price, .kr-card__price');
+		var stockEl  = card.querySelector('.sijab-acc-card__stock, .kr-card__stock');
+		// Extract stock_status from class like "sijab-acc-card__stock--instock"
+		var stockStatus = '';
+		if (stockEl) {
+			var m = stockEl.className.match(/sijab-acc-card__stock--(\w+)/);
+			if (m) stockStatus = m[1];
+		}
+		return {
+			name:         nameEl ? nameEl.textContent.trim() : '',
+			image:        imgEl ? (imgEl.currentSrc || imgEl.src) : '',
+			price_html:   priceEl ? priceEl.innerHTML : '',
+			stock_label:  stockEl ? stockEl.textContent.trim() : '',
+			stock_status: stockStatus
+		};
+	}
 
 	function sendHorizontalBundleAdd(accId, companions, mainId) {
 		var ajaxUrl = (typeof sijabAccStats !== 'undefined' && sijabAccStats.ajax_url)
@@ -1022,10 +1089,9 @@
 		});
 		if (allAlreadyChecked) return;
 
-		// Build accessory label from its card DOM for a friendlier popup.
-		var card = cb.closest('.sijab-acc-card, .kr-card');
-		var nameEl = card ? card.querySelector('.sijab-acc-card__name, .kr-card__name') : null;
-		var accessoryName = nameEl ? nameEl.textContent.trim() : 'tillbehöret';
+		// Build accessory info from its card DOM for the popup.
+		var selfInfo = extractAccessoryInfo(cb);
+		var accessoryName = selfInfo.name || 'tillbehöret';
 
 		// Main product name from the page H1 (approximate — good enough for UX).
 		var h1 = document.querySelector('.product .summary h1, .product_title, h1.product_title');
@@ -1049,7 +1115,10 @@
 			function () {
 				sessionDismissedCompanions[accId] = true;
 				// Do NOT uncheck the accessory — customer decided "just this".
-			}
+			},
+			// opts: show the accessory as "Ditt val"-row. No main row — cards/checklist
+			// adds the main product via the separate bundle CTA, not via the popup.
+			{ selfInfo: selfInfo }
 		);
 	}, true);  // capture phase so we see the change before other listeners
 

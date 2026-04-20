@@ -1713,6 +1713,43 @@ body.sijab-layout-cards form.cart .wc-pao-addons-container + .single_add_to_cart
 .sijab-companion-modal__stock--onbackorder { color: #d98500 !important; }
 .sijab-companion-modal__stock--outofstock { color: #b32d2e !important; }
 
+/* Role badges — identifies each item's role (main product / accessory customer
+   picked / required companion) so the popup transparency is clear. */
+.sijab-companion-modal__badge {
+	display: inline-block !important;
+	margin-top: 4px !important;
+	padding: 2px 8px !important;
+	border-radius: 10px !important;
+	font-size: 11px !important;
+	font-weight: 600 !important;
+	text-transform: uppercase !important;
+	letter-spacing: 0.3px !important;
+	line-height: 1.5 !important;
+}
+.sijab-companion-modal__badge--main {
+	background: #e7f3fe !important;
+	color: #1e73be !important;
+}
+.sijab-companion-modal__badge--self {
+	background: #e6f7ea !important;
+	color: #00a32a !important;
+}
+.sijab-companion-modal__badge--required {
+	background: #fff4e6 !important;
+	color: #d98500 !important;
+}
+
+/* Subtle left-border highlight per role for quick visual scanning */
+.sijab-companion-modal__item--main {
+	border-left: 4px solid #1e73be !important;
+}
+.sijab-companion-modal__item--self {
+	border-left: 4px solid #00a32a !important;
+}
+.sijab-companion-modal__item--required {
+	border-left: 4px solid #d98500 !important;
+}
+
 .sijab-companion-modal__actions {
 	display: flex !important;
 	gap: 10px !important;
