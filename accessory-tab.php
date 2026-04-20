@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.31.12
+ * Version: 2.32.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -32,12 +32,16 @@ class SIJAB_Tillbehor {
 	const META_KEY      = '_sijab_accessories_ids';
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
-	const VERSION       = '2.31.12';
+	const REQ_META      = '_sijab_accessory_requirements';  // [ ['accessory_id'=>X, 'requires'=>[['product_id'=>Y,'qty'=>1],...]], ... ]
+	const VERSION       = '2.32.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
 	/** @var array|null Cached settings. */
 	private $settings = null;
+
+	/** @var array<int, array<int, array<string, mixed>>> Companion-requirements map for the currently-rendering product (keyed by accessory_id). */
+	private $current_companions_map = [];
 
 	public function __construct() {
 		// Frontend hooks — registered dynamically based on placement setting.
@@ -837,6 +841,11 @@ class SIJAB_Tillbehor {
 		}
 		if ( empty( $accessories ) ) return;
 
+		// Emit companion-requirements map for this main product so the popup
+		// frontend JS can look up which companions to show when an accessory
+		// is checked. The map is keyed by accessory product ID.
+		$this->emit_companion_meta( $product );
+
 		$s           = $this->get_settings();
 		$title       = $this->get_section_title( $product );
 		$cols        = (int) $s['columns'];
@@ -1115,7 +1124,8 @@ class SIJAB_Tillbehor {
 					       data-price-excl="<?php echo esc_attr( $acc_price_excl ); ?>"
 					       data-price-incl="<?php echo esc_attr( $acc_price_incl ); ?>"
 					       data-add_to_cart_url="<?php echo esc_url( $acc->add_to_cart_url() ); ?>"
-					       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>" />
+					       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>"
+					       <?php if ( $this->accessory_has_companions( $acc_id ) ) : ?>data-has-companions="1" data-main-product="<?php echo esc_attr( $parent_id ); ?>"<?php endif; ?> />
 				</label>
 			<?php elseif ( $is_variable ) : ?>
 				<label class="sijab-checklist__checkbox sijab-checklist__checkbox--variable">
@@ -1127,7 +1137,8 @@ class SIJAB_Tillbehor {
 					       data-variation_id=""
 					       data-price-excl="0"
 					       data-price-incl="0"
-					       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>" />
+					       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>"
+					       <?php if ( $this->accessory_has_companions( $acc_id ) ) : ?>data-has-companions="1" data-main-product="<?php echo esc_attr( $parent_id ); ?>"<?php endif; ?> />
 				</label>
 			<?php else : ?>
 				<span class="sijab-checklist__checkbox sijab-checklist__checkbox--disabled">
@@ -1288,7 +1299,8 @@ class SIJAB_Tillbehor {
 				       data-price-excl="<?php echo esc_attr( $acc_price_excl ); ?>"
 				       data-price-incl="<?php echo esc_attr( $acc_price_incl ); ?>"
 				       data-add_to_cart_url="<?php echo esc_url( $acc->add_to_cart_url() ); ?>"
-				       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>" />
+				       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>"
+				       <?php if ( $this->accessory_has_companions( $acc_id ) ) : ?>data-has-companions="1" data-main-product="<?php echo esc_attr( $parent_id ); ?>"<?php endif; ?> />
 			<?php elseif ( $is_variable ) : ?>
 				<input type="checkbox"
 				       class="sijab-checklist__input kr-card__input"
@@ -1298,7 +1310,8 @@ class SIJAB_Tillbehor {
 				       data-variation_id=""
 				       data-price-excl="0"
 				       data-price-incl="0"
-				       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>" />
+				       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>"
+				       <?php if ( $this->accessory_has_companions( $acc_id ) ) : ?>data-has-companions="1" data-main-product="<?php echo esc_attr( $parent_id ); ?>"<?php endif; ?> />
 			<?php else : ?>
 				<input type="checkbox" class="kr-card__input" disabled />
 			<?php endif; ?>
@@ -1605,6 +1618,83 @@ class SIJAB_Tillbehor {
 					<p id="sijab_acc_empty_msg" style="color:#999; font-style:italic; <?php echo ! empty( $saved_ids ) ? 'display:none;' : ''; ?>"><?php esc_html_e( 'Inga tillbehör tillagda ännu.', 'sijab-tillbehor' ); ?></p>
 				</div>
 
+				<!-- 3b. Tillbehörs-kombinationer som kräver mer (popup-companions) -->
+				<?php
+				$req_rules = get_post_meta( $post->ID, self::REQ_META, true );
+				if ( ! is_array( $req_rules ) ) $req_rules = [];
+				// Build enriched rules with product name for initial render
+				$req_rules_render = [];
+				foreach ( $req_rules as $rule ) {
+					$acc_id = absint( $rule['accessory_id'] ?? 0 );
+					$acc    = $acc_id ? wc_get_product( $acc_id ) : null;
+					$reqs_render = [];
+					foreach ( (array) ( $rule['requires'] ?? [] ) as $req ) {
+						$req_pid = absint( $req['product_id'] ?? 0 );
+						$req_p   = $req_pid ? wc_get_product( $req_pid ) : null;
+						$reqs_render[] = [
+							'product_id' => $req_pid,
+							'qty'        => max( 1, absint( $req['qty'] ?? 1 ) ),
+							'name'       => $req_p ? html_entity_decode( wp_strip_all_tags( $req_p->get_formatted_name() ) ) : '#' . $req_pid,
+						];
+					}
+					$req_rules_render[] = [
+						'accessory_id' => $acc_id,
+						'accessory_name' => $acc ? html_entity_decode( wp_strip_all_tags( $acc->get_formatted_name() ) ) : '#' . $acc_id,
+						'requires' => $reqs_render,
+					];
+				}
+				?>
+				<div class="sijab-acc-list-section">
+					<h4 class="sijab-acc-list-heading">
+						<?php esc_html_e( 'Tillbehörs-kombinationer som kräver mer', 'sijab-tillbehor' ); ?>
+						<span class="sijab-acc-list-hint"><?php esc_html_e( '(popup visas för kund när dessa tillbehör kryssas)', 'sijab-tillbehor' ); ?></span>
+					</h4>
+					<p style="margin:0 0 8px; color:#555; font-size:12px;">
+						<?php esc_html_e( 'Konfigurera (tillbehör + krävd produkt)-kombinationer. När kunden kryssar i tillbehöret visas en popup som uppmanar kunden att även lägga till den krävda produkten (t.ex. flödesmätare kräver adapter).', 'sijab-tillbehor' ); ?>
+					</p>
+
+					<input type="hidden" id="sijab_req_json" name="sijab_accessory_requirements_json" value="<?php echo esc_attr( wp_json_encode( array_map( function( $r ){ return [ 'accessory_id' => $r['accessory_id'], 'requires' => array_map( function( $q ){ return [ 'product_id' => $q['product_id'], 'qty' => $q['qty'] ]; }, $r['requires'] ) ]; }, $req_rules_render ) ) ); ?>" />
+
+					<ul id="sijab_req_list" style="margin:0 0 12px; padding:0; list-style:none;">
+						<?php foreach ( $req_rules_render as $idx => $rule ) : ?>
+							<li class="sijab-req-rule" data-accessory-id="<?php echo absint( $rule['accessory_id'] ); ?>" style="background:#f9f9f9; border:1px solid #dcdcde; border-radius:4px; padding:10px 12px; margin-bottom:8px;">
+								<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+									<strong style="flex:0 0 auto; color:#2271b1;"><?php esc_html_e( 'När tillbehöret är valt:', 'sijab-tillbehor' ); ?></strong>
+									<span class="sijab-req-acc-name" style="flex:1; font-weight:600;"><?php echo esc_html( $rule['accessory_name'] ); ?></span>
+									<a href="#" class="sijab-req-remove button-link-delete" style="flex:0 0 auto; color:#d63638;"><?php esc_html_e( 'Ta bort', 'sijab-tillbehor' ); ?></a>
+								</div>
+								<div style="padding-left:12px; border-left:2px solid #dcdcde; margin-top:6px;">
+									<div style="color:#555; font-size:12px; margin-bottom:4px;"><?php esc_html_e( 'Visa popup som kräver:', 'sijab-tillbehor' ); ?></div>
+									<ul class="sijab-req-reqs" style="margin:0; padding:0; list-style:none;">
+										<?php foreach ( $rule['requires'] as $ridx => $req ) : ?>
+											<li data-product-id="<?php echo absint( $req['product_id'] ); ?>" data-qty="<?php echo absint( $req['qty'] ); ?>" style="padding:4px 0; display:flex; gap:8px; align-items:center;">
+												<span class="dashicons dashicons-arrow-right-alt" style="color:#999;"></span>
+												<span class="sijab-req-reqname" style="flex:1;"><?php echo esc_html( $req['name'] ); ?></span>
+												<span style="color:#666; font-size:12px;"><?php esc_html_e( 'Antal:', 'sijab-tillbehor' ); ?> <strong><?php echo absint( $req['qty'] ); ?></strong></span>
+												<a href="#" class="sijab-req-reqremove" style="color:#d63638;" title="<?php esc_attr_e( 'Ta bort krav', 'sijab-tillbehor' ); ?>">✕</a>
+											</li>
+										<?php endforeach; ?>
+									</ul>
+								</div>
+							</li>
+						<?php endforeach; ?>
+					</ul>
+
+					<div id="sijab_req_add" style="background:#fff; border:1px dashed #c3c4c7; border-radius:4px; padding:10px 12px;">
+						<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+							<label style="flex:0 0 auto; font-weight:600;"><?php esc_html_e( 'Tillbehör:', 'sijab-tillbehor' ); ?></label>
+							<select class="wc-product-search" id="sijab_req_acc" data-placeholder="<?php esc_attr_e( 'Välj bland produktens tillbehör…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="true" style="flex:1; min-width:200px;"></select>
+						</div>
+						<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+							<label style="flex:0 0 auto; font-weight:600;"><?php esc_html_e( 'Kräver:', 'sijab-tillbehor' ); ?></label>
+							<select class="wc-product-search" id="sijab_req_product" data-placeholder="<?php esc_attr_e( 'Sök produkt…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="true" style="flex:1; min-width:200px;"></select>
+							<label style="flex:0 0 auto; color:#555; font-size:12px;"><?php esc_html_e( 'Antal:', 'sijab-tillbehor' ); ?></label>
+							<input type="number" id="sijab_req_qty" min="1" value="1" style="width:60px;" />
+							<button type="button" class="button" id="sijab_req_add_btn"><?php esc_html_e( 'Lägg till kombination', 'sijab-tillbehor' ); ?></button>
+						</div>
+					</div>
+				</div>
+
 				<!-- 4. Länka till tillbehörskategori -->
 				<p class="form-field sijab-ff">
 					<label for="sijab_acc_category"><?php esc_html_e( 'Länka till tillbehörskategori', 'sijab-tillbehor' ); ?></label>
@@ -1707,6 +1797,140 @@ class SIJAB_Tillbehor {
 		} else {
 			$product->delete_meta_data( '_sijab_acc_category_id' );
 		}
+
+		// Save accessory-requirement combinations — which pairs of (main product
+		// + accessory) trigger a popup asking the customer to also add a required
+		// companion product (e.g. flödesmätare needs adapter to fit the tank).
+		// Stored as JSON on a hidden input so it survives WC's nested serialization.
+		$this->save_accessory_requirements( $product );
+	}
+
+	/**
+	 * Parse and persist the accessory-requirements JSON from the admin panel.
+	 */
+	private function save_accessory_requirements( $product ): void {
+		$raw = $_POST['sijab_accessory_requirements_json'] ?? '';
+		if ( ! is_string( $raw ) || $raw === '' ) {
+			$product->delete_meta_data( self::REQ_META );
+			return;
+		}
+		$decoded = json_decode( wp_unslash( $raw ), true );
+		if ( ! is_array( $decoded ) ) {
+			$product->delete_meta_data( self::REQ_META );
+			return;
+		}
+
+		$sanitized = [];
+		foreach ( $decoded as $rule ) {
+			if ( ! is_array( $rule ) ) continue;
+			$accessory_id = absint( $rule['accessory_id'] ?? 0 );
+			if ( ! $accessory_id ) continue;
+
+			$requires = [];
+			if ( isset( $rule['requires'] ) && is_array( $rule['requires'] ) ) {
+				foreach ( $rule['requires'] as $req ) {
+					if ( ! is_array( $req ) ) continue;
+					$req_pid = absint( $req['product_id'] ?? 0 );
+					$req_qty = max( 1, absint( $req['qty'] ?? 1 ) );
+					if ( $req_pid && $req_pid !== $accessory_id ) {
+						$requires[] = [ 'product_id' => $req_pid, 'qty' => $req_qty ];
+					}
+				}
+			}
+			if ( empty( $requires ) ) continue;
+
+			$sanitized[] = [
+				'accessory_id' => $accessory_id,
+				'requires'     => $requires,
+			];
+		}
+
+		if ( empty( $sanitized ) ) {
+			$product->delete_meta_data( self::REQ_META );
+		} else {
+			$product->update_meta_data( self::REQ_META, $sanitized );
+		}
+	}
+
+	/**
+	 * Get the accessory-requirements map for a main product.
+	 * Returns [ accessory_id => [ ['product_id'=>X,'qty'=>Y], ... ] ]
+	 */
+	private function get_accessory_requirements( int $main_product_id ): array {
+		$raw = get_post_meta( $main_product_id, self::REQ_META, true );
+		if ( ! is_array( $raw ) ) return [];
+		$map = [];
+		foreach ( $raw as $rule ) {
+			$acc_id   = absint( $rule['accessory_id'] ?? 0 );
+			$requires = is_array( $rule['requires'] ?? null ) ? $rule['requires'] : [];
+			if ( $acc_id && ! empty( $requires ) ) {
+				$map[ $acc_id ] = $requires;
+			}
+		}
+		return $map;
+	}
+
+	/**
+	 * Emit an inline <script> block exposing the companion-requirements map
+	 * for the current main product. The JS popup reads window.sijabCompanions
+	 * to know which products to show when a given accessory is checked.
+	 */
+	private function emit_companion_meta( WC_Product $main_product ): void {
+		$map = $this->get_accessory_requirements( $main_product->get_id() );
+
+		// Also cache in class property so row-rendering can quickly mark checkboxes.
+		$this->current_companions_map = $map;
+
+		if ( empty( $map ) ) {
+			echo '<script>window.sijabCompanions=window.sijabCompanions||{};window.sijabCompanions["' . esc_js( $main_product->get_id() ) . '"]={};</script>';
+			return;
+		}
+
+		$tax_display = get_option( 'woocommerce_tax_display_shop', 'excl' );
+		$enriched = [];
+
+		foreach ( $map as $accessory_id => $requires ) {
+			$items = [];
+			foreach ( $requires as $req ) {
+				$req_pid = absint( $req['product_id'] ?? 0 );
+				$qty     = max( 1, absint( $req['qty'] ?? 1 ) );
+				if ( ! $req_pid ) continue;
+
+				$req_product = wc_get_product( $req_pid );
+				if ( ! $req_product ) continue;
+
+				$stock = $this->get_stock_display( $req_product );
+				$price_excl = (float) wc_get_price_excluding_tax( $req_product );
+				$price_incl = (float) wc_get_price_including_tax( $req_product );
+
+				$items[] = [
+					'id'           => $req_pid,
+					'name'         => html_entity_decode( wp_strip_all_tags( $req_product->get_name() ) ),
+					'sku'          => $req_product->get_sku(),
+					'price_html'   => $req_product->get_price_html(),
+					'price_excl'   => $price_excl,
+					'price_incl'   => $price_incl,
+					'qty'          => $qty,
+					'in_stock'     => $req_product->is_in_stock() && $req_product->is_purchasable(),
+					'stock_label'  => $stock['label'],
+					'stock_status' => $stock['status'],
+					'image'        => $req_product->get_image_id() ? wp_get_attachment_image_url( $req_product->get_image_id(), 'thumbnail' ) : wc_placeholder_img_src( 'thumbnail' ),
+					'permalink'    => $req_product->get_permalink(),
+				];
+			}
+			if ( ! empty( $items ) ) {
+				$enriched[ $accessory_id ] = $items;
+			}
+		}
+
+		echo '<script>window.sijabCompanions=window.sijabCompanions||{};window.sijabCompanions["' . esc_js( $main_product->get_id() ) . '"]=' . wp_json_encode( $enriched ) . ';</script>';
+	}
+
+	/**
+	 * Check if the given accessory has companion requirements for the current main product.
+	 */
+	private function accessory_has_companions( int $accessory_id ): bool {
+		return ! empty( $this->current_companions_map[ $accessory_id ] );
 	}
 
 	public function enqueue_admin_css( $hook ): void {
@@ -2249,9 +2473,95 @@ class SIJAB_Tillbehor {
 					status.text('✗ Nätverksfel').css('color', '#a00').show();
 				});
 			});
+
+			// ── Accessory-requirements (popup-companions) management ──
+			window.sijabSyncReqJson = function() {
+				var rules = [];
+				$('#sijab_req_list .sijab-req-rule').each(function(){
+					var accId = parseInt($(this).data('accessory-id'), 10);
+					if (!accId) return;
+					var requires = [];
+					$(this).find('.sijab-req-reqs li').each(function(){
+						var pid = parseInt($(this).data('product-id'), 10);
+						var qty = parseInt($(this).data('qty'), 10) || 1;
+						if (pid) requires.push({ product_id: pid, qty: qty });
+					});
+					if (requires.length) rules.push({ accessory_id: accId, requires: requires });
+				});
+				$('#sijab_req_json').val(JSON.stringify(rules));
+			};
+			var syncReqJson = window.sijabSyncReqJson;
+
+			$('#sijab_req_add_btn').on('click', function(){
+				var accSel = $('#sijab_req_acc');
+				var prodSel = $('#sijab_req_product');
+				var accId = parseInt(accSel.val(), 10);
+				var prodId = parseInt(prodSel.val(), 10);
+				var qty = Math.max(1, parseInt($('#sijab_req_qty').val(), 10) || 1);
+				if (!accId || !prodId) { alert('" . esc_js( __( 'Välj både tillbehör och krävd produkt.', 'sijab-tillbehor' ) ) . "'); return; }
+				if (accId === prodId) { alert('" . esc_js( __( 'Tillbehöret kan inte kräva sig själv.', 'sijab-tillbehor' ) ) . "'); return; }
+				var accName = accSel.find('option:selected').text() || '#' + accId;
+				var prodName = prodSel.find('option:selected').text() || '#' + prodId;
+
+				// Check if rule for this accessory already exists
+				var existingRule = $('#sijab_req_list .sijab-req-rule[data-accessory-id=\"' + accId + '\"]');
+				if (existingRule.length) {
+					// Append to existing rule's requires
+					if (existingRule.find('.sijab-req-reqs li[data-product-id=\"' + prodId + '\"]').length) {
+						alert('" . esc_js( __( 'Denna produkt är redan krav för detta tillbehör.', 'sijab-tillbehor' ) ) . "');
+						return;
+					}
+					existingRule.find('.sijab-req-reqs').append(
+						'<li data-product-id=\"' + prodId + '\" data-qty=\"' + qty + '\" style=\"padding:4px 0; display:flex; gap:8px; align-items:center;\">' +
+						'<span class=\"dashicons dashicons-arrow-right-alt\" style=\"color:#999;\"></span>' +
+						'<span class=\"sijab-req-reqname\" style=\"flex:1;\">' + $('<span>').text(prodName).html() + '</span>' +
+						'<span style=\"color:#666; font-size:12px;\">Antal: <strong>' + qty + '</strong></span>' +
+						'<a href=\"#\" class=\"sijab-req-reqremove\" style=\"color:#d63638;\" title=\"Ta bort krav\">✕</a>' +
+						'</li>'
+					);
+				} else {
+					// Create new rule
+					var li = '<li class=\"sijab-req-rule\" data-accessory-id=\"' + accId + '\" style=\"background:#f9f9f9; border:1px solid #dcdcde; border-radius:4px; padding:10px 12px; margin-bottom:8px;\">' +
+						'<div style=\"display:flex; align-items:center; gap:8px; margin-bottom:6px;\">' +
+						'<strong style=\"flex:0 0 auto; color:#2271b1;\">När tillbehöret är valt:</strong>' +
+						'<span class=\"sijab-req-acc-name\" style=\"flex:1; font-weight:600;\">' + $('<span>').text(accName).html() + '</span>' +
+						'<a href=\"#\" class=\"sijab-req-remove button-link-delete\" style=\"flex:0 0 auto; color:#d63638;\">Ta bort</a>' +
+						'</div>' +
+						'<div style=\"padding-left:12px; border-left:2px solid #dcdcde; margin-top:6px;\">' +
+						'<div style=\"color:#555; font-size:12px; margin-bottom:4px;\">Visa popup som kräver:</div>' +
+						'<ul class=\"sijab-req-reqs\" style=\"margin:0; padding:0; list-style:none;\">' +
+						'<li data-product-id=\"' + prodId + '\" data-qty=\"' + qty + '\" style=\"padding:4px 0; display:flex; gap:8px; align-items:center;\">' +
+						'<span class=\"dashicons dashicons-arrow-right-alt\" style=\"color:#999;\"></span>' +
+						'<span class=\"sijab-req-reqname\" style=\"flex:1;\">' + $('<span>').text(prodName).html() + '</span>' +
+						'<span style=\"color:#666; font-size:12px;\">Antal: <strong>' + qty + '</strong></span>' +
+						'<a href=\"#\" class=\"sijab-req-reqremove\" style=\"color:#d63638;\" title=\"Ta bort krav\">✕</a>' +
+						'</li>' +
+						'</ul></div></li>';
+					$('#sijab_req_list').append(li);
+				}
+				accSel.val(null).trigger('change');
+				prodSel.val(null).trigger('change');
+				$('#sijab_req_qty').val(1);
+				syncReqJson();
+			});
+
+			$(document).on('click', '.sijab-req-remove', function(e){
+				e.preventDefault();
+				$(this).closest('.sijab-req-rule').remove();
+				syncReqJson();
+			});
+
+			$(document).on('click', '.sijab-req-reqremove', function(e){
+				e.preventDefault();
+				var li = $(this).closest('li');
+				var rule = li.closest('.sijab-req-rule');
+				li.remove();
+				if (!rule.find('.sijab-req-reqs li').length) rule.remove();
+				syncReqJson();
+			});
 		});
 			// Safety: always sync JSON right before form submit.
-			$('#post').on('submit', function() { syncJson(); });
+			$('#post').on('submit', function() { syncJson(); if (typeof window.sijabSyncReqJson === 'function') window.sijabSyncReqJson(); });
 		";
 		wp_add_inline_script( 'jquery-ui-sortable', $js );
 	}

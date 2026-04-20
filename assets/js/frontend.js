@@ -423,6 +423,23 @@
 
 			items.push(item);
 			trackEvent(pid, 'add_to_cart');
+
+			// If customer confirmed companions for this accessory via popup,
+			// add them to the batch too. parent_id is still the main product.
+			if (window.sijabPendingCompanions && window.sijabPendingCompanions[pid]) {
+				window.sijabPendingCompanions[pid].forEach(function (comp) {
+					if (!comp || !comp.id) return;
+					// Don't duplicate if the companion is already a checked accessory.
+					var dup = items.some(function (it) { return it.product_id === comp.id && !it.variation_id; });
+					if (dup) return;
+					items.push({
+						product_id: comp.id,
+						quantity:   comp.qty || 1,
+						parent_id:  parentId
+					});
+					trackEvent(comp.id, 'add_to_cart');
+				});
+			}
 		});
 
 		return items;
@@ -783,6 +800,168 @@
 			updateChecklistTotal();
 		}
 	});
+
+	// ─────────────────────────────────────────────────────────────────
+	// Companion-popup: when an accessory with configured requirements is
+	// checked, show a modal that tells the customer which product they also
+	// need (e.g. flödesmätare needs adapter). Stored per-session so if the
+	// customer already dismissed it for this accessory, it won't re-appear.
+	// ─────────────────────────────────────────────────────────────────
+
+	window.sijabPendingCompanions = window.sijabPendingCompanions || {};
+	var sessionDismissedCompanions = {};  // accessory_id -> true
+
+	function buildCompanionModal(accessoryName, mainProductName, companions, onAccept, onReject) {
+		// Remove any existing modal first
+		var existing = document.querySelector('.sijab-companion-modal-overlay');
+		if (existing) existing.remove();
+
+		var overlay = document.createElement('div');
+		overlay.className = 'sijab-companion-modal-overlay';
+
+		var modal = document.createElement('div');
+		modal.className = 'sijab-companion-modal';
+
+		var title = document.createElement('div');
+		title.className = 'sijab-companion-modal__title';
+		title.textContent = 'För att ' + accessoryName + ' ska passa' + (mainProductName ? ' på ' + mainProductName : '') + ' krävs:';
+
+		var list = document.createElement('ul');
+		list.className = 'sijab-companion-modal__list';
+
+		companions.forEach(function (c) {
+			var li = document.createElement('li');
+			li.className = 'sijab-companion-modal__item';
+
+			var img = document.createElement('img');
+			img.src = c.image || '';
+			img.className = 'sijab-companion-modal__img';
+			img.alt = c.name;
+
+			var info = document.createElement('div');
+			info.className = 'sijab-companion-modal__info';
+			var name = document.createElement('div');
+			name.className = 'sijab-companion-modal__name';
+			name.textContent = c.name;
+			info.appendChild(name);
+
+			var meta = document.createElement('div');
+			meta.className = 'sijab-companion-modal__meta';
+			meta.innerHTML = (c.price_html || '') + ' &middot; <span class="sijab-companion-modal__stock sijab-companion-modal__stock--' +
+				(c.stock_status || '') + '">' + (c.stock_label || '') + '</span>';
+			info.appendChild(meta);
+
+			li.appendChild(img);
+			li.appendChild(info);
+			list.appendChild(li);
+		});
+
+		var actions = document.createElement('div');
+		actions.className = 'sijab-companion-modal__actions';
+
+		var btnAccept = document.createElement('button');
+		btnAccept.type = 'button';
+		btnAccept.className = 'sijab-companion-modal__btn sijab-companion-modal__btn--primary';
+		btnAccept.textContent = 'Lägg till båda';
+		btnAccept.addEventListener('click', function () {
+			overlay.remove();
+			onAccept && onAccept();
+		});
+
+		var btnReject = document.createElement('button');
+		btnReject.type = 'button';
+		btnReject.className = 'sijab-companion-modal__btn sijab-companion-modal__btn--secondary';
+		btnReject.textContent = 'Endast ' + accessoryName;
+		btnReject.addEventListener('click', function () {
+			overlay.remove();
+			onReject && onReject();
+		});
+
+		actions.appendChild(btnAccept);
+		actions.appendChild(btnReject);
+
+		modal.appendChild(title);
+		modal.appendChild(list);
+		modal.appendChild(actions);
+		overlay.appendChild(modal);
+		document.body.appendChild(overlay);
+
+		// Click outside OR Esc = same as "Endast X"
+		overlay.addEventListener('click', function (e) {
+			if (e.target === overlay) { overlay.remove(); onReject && onReject(); }
+		});
+		document.addEventListener('keydown', function escHandler(e) {
+			if (e.key === 'Escape') {
+				overlay.remove();
+				document.removeEventListener('keydown', escHandler);
+				onReject && onReject();
+			}
+		});
+	}
+
+	// Listen for checkbox changes to trigger the popup.
+	document.addEventListener('change', function (e) {
+		var cb = e.target;
+		if (!cb || !cb.classList || !cb.classList.contains('sijab-checklist__input')) return;
+		if (!cb.checked) {
+			// Unchecked: forget any pending companion promise for this accessory
+			var accId = parseInt(cb.getAttribute('data-product_id'), 10);
+			if (accId && window.sijabPendingCompanions[accId]) {
+				delete window.sijabPendingCompanions[accId];
+			}
+			return;
+		}
+
+		// Checked → maybe show popup
+		if (cb.getAttribute('data-has-companions') !== '1') return;
+
+		var accId = parseInt(cb.getAttribute('data-product_id'), 10);
+		var mainId = parseInt(cb.getAttribute('data-main-product'), 10);
+		if (!accId || !mainId) return;
+
+		// Already dismissed in this session? Don't re-prompt.
+		if (sessionDismissedCompanions[accId]) return;
+
+		var mainMap = (window.sijabCompanions || {})[mainId] || {};
+		var companions = mainMap[accId] || [];
+		if (!companions.length) return;
+
+		// If the companion is already checked as its own accessory, skip popup.
+		var allAlreadyChecked = companions.every(function (c) {
+			return !!document.querySelector('.sijab-checklist__input[data-product_id="' + c.id + '"]:checked');
+		});
+		if (allAlreadyChecked) return;
+
+		// Build accessory label from its card DOM for a friendlier popup.
+		var card = cb.closest('.sijab-acc-card, .kr-card');
+		var nameEl = card ? card.querySelector('.sijab-acc-card__name, .kr-card__name') : null;
+		var accessoryName = nameEl ? nameEl.textContent.trim() : 'tillbehöret';
+
+		// Main product name from the page H1 (approximate — good enough for UX).
+		var h1 = document.querySelector('.product .summary h1, .product_title, h1.product_title');
+		var mainProductName = h1 ? h1.textContent.trim() : '';
+
+		buildCompanionModal(accessoryName, mainProductName, companions,
+			// Accept: remember companions for cart-add, check the companion's own accessory checkbox if visible
+			function () {
+				window.sijabPendingCompanions[accId] = companions.map(function (c) { return { id: c.id, qty: c.qty || 1 }; });
+				// Also try to check the companion's accessory checkbox (so it shows in totals).
+				companions.forEach(function (c) {
+					var compCb = document.querySelector('.sijab-checklist__input[data-product_id="' + c.id + '"]');
+					if (compCb && !compCb.checked && !compCb.disabled) {
+						compCb.checked = true;
+						compCb.dispatchEvent(new Event('change', { bubbles: true }));
+					}
+				});
+				updateChecklistTotal();
+			},
+			// Reject: remember dismissal so same accessory doesn't re-prompt this session
+			function () {
+				sessionDismissedCompanions[accId] = true;
+				// Do NOT uncheck the accessory — customer decided "just this".
+			}
+		);
+	}, true);  // capture phase so we see the change before other listeners
 
 	// Init mobile toggle when DOM is ready
 	function initAll() {
