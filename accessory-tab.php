@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.32.0
+ * Version: 2.32.1
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -33,7 +33,7 @@ class SIJAB_Tillbehor {
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
 	const REQ_META      = '_sijab_accessory_requirements';  // [ ['accessory_id'=>X, 'requires'=>[['product_id'=>Y,'qty'=>1],...]], ... ]
-	const VERSION       = '2.32.0';
+	const VERSION       = '2.32.1';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -1680,18 +1680,26 @@ class SIJAB_Tillbehor {
 						<?php endforeach; ?>
 					</ul>
 
-					<div id="sijab_req_add" style="background:#fff; border:1px dashed #c3c4c7; border-radius:4px; padding:10px 12px;">
-						<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-							<label style="flex:0 0 auto; font-weight:600;"><?php esc_html_e( 'Tillbehör:', 'sijab-tillbehor' ); ?></label>
-							<select class="wc-product-search" id="sijab_req_acc" data-placeholder="<?php esc_attr_e( 'Välj bland produktens tillbehör…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="true" style="flex:1; min-width:200px;"></select>
-						</div>
-						<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-							<label style="flex:0 0 auto; font-weight:600;"><?php esc_html_e( 'Kräver:', 'sijab-tillbehor' ); ?></label>
-							<select class="wc-product-search" id="sijab_req_product" data-placeholder="<?php esc_attr_e( 'Sök produkt…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="true" style="flex:1; min-width:200px;"></select>
-							<label style="flex:0 0 auto; color:#555; font-size:12px;"><?php esc_html_e( 'Antal:', 'sijab-tillbehor' ); ?></label>
-							<input type="number" id="sijab_req_qty" min="1" value="1" style="width:60px;" />
-							<button type="button" class="button" id="sijab_req_add_btn"><?php esc_html_e( 'Lägg till kombination', 'sijab-tillbehor' ); ?></button>
-						</div>
+					<div id="sijab_req_add" class="sijab-req-add-wrap">
+						<p class="form-field sijab-ff">
+							<label for="sijab_req_acc"><?php esc_html_e( 'Tillbehör', 'sijab-tillbehor' ); ?></label>
+							<span class="sijab-field-wrap">
+								<select class="wc-product-search" id="sijab_req_acc" data-placeholder="<?php esc_attr_e( 'Välj bland produktens tillbehör…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="true" style="width:100%;"></select>
+							</span>
+						</p>
+						<p class="form-field sijab-ff">
+							<label for="sijab_req_product"><?php esc_html_e( 'Kräver', 'sijab-tillbehor' ); ?></label>
+							<span class="sijab-field-wrap">
+								<select class="wc-product-search" id="sijab_req_product" data-placeholder="<?php esc_attr_e( 'Sök produkt…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="true" style="width:100%;"></select>
+							</span>
+						</p>
+						<p class="form-field sijab-ff">
+							<label for="sijab_req_qty"><?php esc_html_e( 'Antal', 'sijab-tillbehor' ); ?></label>
+							<span class="sijab-field-wrap">
+								<input type="number" id="sijab_req_qty" min="1" value="1" style="width:80px; margin-right:8px;" />
+								<button type="button" class="button button-primary" id="sijab_req_add_btn"><?php esc_html_e( 'Lägg till kombination', 'sijab-tillbehor' ); ?></button>
+							</span>
+						</p>
 					</div>
 				</div>
 
