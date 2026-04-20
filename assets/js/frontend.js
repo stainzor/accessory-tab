@@ -974,13 +974,27 @@
 		var h1 = document.querySelector('.product .summary h1, .product_title, h1.product_title');
 		var mainProductName = h1 ? h1.textContent.trim() : '';
 
-		// Main product info from the global emitted by PHP.
+		// Determine if we can include the main product.
+		// - Simple product: yes, always include (skip_if_in_cart handles dedup).
+		// - Variable product: only include if the customer has selected a variation;
+		//   otherwise we'd silently fail (WC rejects add_to_cart of variable product
+		//   without variation_id) and the tank would be missing from cart.
 		var mainInfo = (window.sijabMainProductInfo || {})[mainId] || null;
+		var canIncludeMain = true;
+		var form = document.querySelector('form.cart');
+		if (form && form.classList.contains('variations_form')) {
+			var varIdInput = form.querySelector('input[name="variation_id"]');
+			var varId = varIdInput ? parseInt(varIdInput.value, 10) || 0 : 0;
+			if (!varId) {
+				canIncludeMain = false;  // variable but not chosen → don't try to add main
+			}
+		}
+		var mainInfoForPopup = canIncludeMain ? mainInfo : null;
 
 		buildCompanionModal(accessoryName, mainProductName, companions,
 			// Accept: atomic bundle add-to-cart (accessory + all companions)
 			function () {
-				sendHorizontalBundleAdd(accId, companions, mainId);
+				sendHorizontalBundleAdd(accId, companions, mainId, canIncludeMain);
 			},
 			// Reject: remember dismissal and let the original WC AJAX add just the accessory
 			function () {
@@ -988,7 +1002,7 @@
 				btn.setAttribute('data-sijab-bypass-popup', '1');
 				btn.click();
 			},
-			{ selfInfo: selfInfo, mainInfo: mainInfo }
+			{ selfInfo: selfInfo, mainInfo: mainInfoForPopup }
 		);
 	}, true);
 
@@ -1017,18 +1031,33 @@
 		};
 	}
 
-	function sendHorizontalBundleAdd(accId, companions, mainId) {
+	function sendHorizontalBundleAdd(accId, companions, mainId, includeMain) {
 		var ajaxUrl = (typeof sijabAccStats !== 'undefined' && sijabAccStats.ajax_url)
 			? sijabAccStats.ajax_url
 			: '/wp-admin/admin-ajax.php';
 
 		var items = [];
-		// Main product — only added if not already in cart (server-side check).
-		// Rationale: customer on the tank product page clicking accessory's
-		// "LÄGG TILL" plus confirming the popup has signalled "I want this
-		// combo to work" — which only makes sense with the main tank included.
-		if (mainId) {
-			items.push({ product_id: mainId, quantity: 1, skip_if_in_cart: true });
+		// Main product — only added if includeMain is true AND not already in
+		// cart (server-side skip_if_in_cart check). For variable products we MUST
+		// pass variation_id + attributes, otherwise WC's add_to_cart rejects it
+		// silently and the tank disappears from cart. Reading from form.cart
+		// captures the customer's currently-selected variation.
+		if (mainId && includeMain) {
+			var mainItem = { product_id: mainId, quantity: 1, skip_if_in_cart: true };
+			var form = document.querySelector('form.cart');
+			if (form) {
+				var fd = new FormData(form);
+				var variationId = parseInt(fd.get('variation_id') || 0, 10) || 0;
+				if (variationId) {
+					mainItem.variation_id = variationId;
+					var attrs = {};
+					fd.forEach(function (v, k) {
+						if (typeof k === 'string' && k.indexOf('attribute_') === 0) attrs[k] = v;
+					});
+					mainItem.attributes = attrs;
+				}
+			}
+			items.push(mainItem);
 		}
 		items.push({ product_id: accId, quantity: 1, parent_id: mainId });
 		companions.forEach(function (c) {
