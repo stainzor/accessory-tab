@@ -424,6 +424,16 @@
 			items.push(item);
 			trackEvent(pid, 'add_to_cart');
 
+			// Install line-item (v2.33.0): if the customer selected "Jag vill
+			// ha hjälp med montering…" on this accessory, push an extra item
+			// with an `install` envelope. Server looks up the admin-configured
+			// tier+price for (main, accessory) and appends an ARB cart line.
+			var card = cb.closest('.sijab-acc-card');
+			if (typeof window.sijabGetInstallItem === 'function') {
+				var instItem = window.sijabGetInstallItem(pid, parentId, card);
+				if (instItem) items.push(instItem);
+			}
+
 			// If customer confirmed companions for this accessory via popup,
 			// add them to the batch too. parent_id is still the main product.
 			if (window.sijabPendingCompanions && window.sijabPendingCompanions[pid]) {
@@ -1119,6 +1129,15 @@
 			items.push({ product_id: c.id, quantity: c.qty || 1, parent_id: mainId });
 		});
 
+		// Install line-item (v2.33.0): look up the accessory's card on the page
+		// and, if its install radio is set to "yes", append the install envelope
+		// so server adds the ARB line alongside the accessory.
+		if (typeof window.sijabGetInstallItem === 'function') {
+			var accCard = document.querySelector('.sijab-acc-card[data-accessory-id="' + accId + '"]');
+			var instItem = window.sijabGetInstallItem(accId, mainId, accCard);
+			if (instItem) items.push(instItem);
+		}
+
 		var body = new FormData();
 		body.append('action', 'sijab_bundle_add_to_cart');
 		body.append('items', JSON.stringify(items));
@@ -1206,15 +1225,151 @@
 		);
 	}, true);  // capture phase so we see the change before other listeners
 
+	// ────────────────────────────────────────────────────────────────
+	// Installation radios (v2.33.0)
+	//
+	// Admin configures on the main product which accessories can be
+	// installed by staff, and at what tier (Liten 50 % / Stor 100 % / Eget).
+	// PHP emits window.sijabInstallations = { mainId: { accId: {...} } }.
+	// We scan accessory cards on the page and inject a 2-radio UI:
+	//   ( ) Ingen montering
+	//   ( ) Jag vill ha hjälp med montering av <accessory> – <price>
+	// When the customer batch-adds (cards/checklist) OR adds via the
+	// popup-companion horizontal flow, an extra `{install:{...}}` item
+	// is pushed to the payload so the server adds the ARB product line.
+	// ────────────────────────────────────────────────────────────────
+
+	function getInstallConfig(mainId, accId) {
+		var all = window.sijabInstallations || {};
+		var forMain = all[mainId] || all[String(mainId)] || {};
+		return forMain[accId] || forMain[String(accId)] || null;
+	}
+
+	function buildInstallRadioGroup(mainId, accId, cfg) {
+		var name = 'sijab-install-' + mainId + '-' + accId;
+		var wrap = document.createElement('div');
+		wrap.className = 'sijab-install-options';
+		wrap.setAttribute('data-install-acc-id', accId);
+		wrap.setAttribute('data-install-main-id', mainId);
+
+		// "No install" option — default checked.
+		var labelNo = document.createElement('label');
+		labelNo.className = 'sijab-install-radio sijab-install-radio--no';
+		var inNo = document.createElement('input');
+		inNo.type = 'radio'; inNo.name = name; inNo.value = 'no'; inNo.checked = true;
+		var spanNo = document.createElement('span');
+		spanNo.className = 'sijab-install-label';
+		spanNo.textContent = 'Ingen montering';
+		labelNo.appendChild(inNo); labelNo.appendChild(spanNo);
+
+		// "Yes install" option — dynamic text with accessory name + price.
+		var labelYes = document.createElement('label');
+		labelYes.className = 'sijab-install-radio sijab-install-radio--yes';
+		var inYes = document.createElement('input');
+		inYes.type = 'radio'; inYes.name = name; inYes.value = 'yes';
+		var spanYes = document.createElement('span');
+		spanYes.className = 'sijab-install-label';
+		spanYes.textContent = 'Jag vill ha hjälp med montering av ' + cfg.accessory_name + ' – ' + cfg.price_formatted;
+		labelYes.appendChild(inYes); labelYes.appendChild(spanYes);
+
+		wrap.appendChild(labelNo);
+		wrap.appendChild(labelYes);
+		return wrap;
+	}
+
+	function injectInstallRadios() {
+		var all = window.sijabInstallations || {};
+		if (!all || Object.keys(all).length === 0) return;
+
+		// Checklist/cards layout: the input carries data-product_id + data-main-product.
+		document.querySelectorAll('.sijab-checklist__input[data-main-product]').forEach(function (cb) {
+			var accId  = parseInt(cb.getAttribute('data-product_id'), 10);
+			var mainId = parseInt(cb.getAttribute('data-main-product'), 10);
+			if (!accId || !mainId) return;
+			var cfg = getInstallConfig(mainId, accId);
+			if (!cfg) return;
+			var card = cb.closest('.sijab-acc-card');
+			if (!card || card.querySelector('.sijab-install-options')) return;
+			var group = buildInstallRadioGroup(mainId, accId, cfg);
+			// Checklist/cards: install radio is only meaningful when the
+			// accessory is actually selected. Hide until checked.
+			group.classList.add('sijab-install-options--collapsed');
+			if (cb.checked) group.classList.remove('sijab-install-options--collapsed');
+			card.appendChild(group);
+		});
+
+		// Wire up visibility + reset-on-uncheck for checklist/cards mode.
+		if (!window.sijabInstallListenerBound) {
+			window.sijabInstallListenerBound = true;
+			document.addEventListener('change', function (ev) {
+				var cb = ev.target;
+				if (!cb || !cb.classList || !cb.classList.contains('sijab-checklist__input')) return;
+				var card = cb.closest('.sijab-acc-card');
+				if (!card) return;
+				var group = card.querySelector('.sijab-install-options');
+				if (!group) return;
+				if (cb.checked) {
+					group.classList.remove('sijab-install-options--collapsed');
+				} else {
+					group.classList.add('sijab-install-options--collapsed');
+					// Reset radio so an unchecked accessory doesn't trigger install.
+					var noRadio = group.querySelector('input[value="no"]');
+					if (noRadio) noRadio.checked = true;
+				}
+			});
+		}
+
+		// Horizontal / grid / compact: the LÄGG TILL button carries data-main-product
+		// + data-product-id. We skip cards where the checklist injection already ran
+		// (those already have .sijab-install-options).
+		document.querySelectorAll('.sijab-acc-atc-btn[data-main-product]').forEach(function (btn) {
+			var accId  = parseInt(btn.getAttribute('data-product-id') || btn.getAttribute('data-parent-id'), 10);
+			var mainId = parseInt(btn.getAttribute('data-main-product'), 10);
+			if (!accId || !mainId) {
+				// Try reading from the parent card.
+				var cardEl = btn.closest('.sijab-acc-card');
+				if (cardEl && cardEl.hasAttribute('data-accessory-id')) {
+					accId = parseInt(cardEl.getAttribute('data-accessory-id'), 10);
+				}
+			}
+			if (!accId || !mainId) return;
+			var cfg = getInstallConfig(mainId, accId);
+			if (!cfg) return;
+			var card = btn.closest('.sijab-acc-card');
+			if (!card || card.querySelector('.sijab-install-options')) return;
+			var group = buildInstallRadioGroup(mainId, accId, cfg);
+			card.appendChild(group);
+		});
+	}
+
+	/**
+	 * For a given accessory cart-entry (checklist checkbox OR accessory card),
+	 * return a payload object `{ install: { main_id, for_accessory_id } }` if
+	 * the customer selected "yes" on the install radio — or null otherwise.
+	 */
+	function getInstallItemForAccessory(accId, mainId, card) {
+		if (!card) return null;
+		var group = card.querySelector('.sijab-install-options[data-install-acc-id="' + accId + '"]');
+		if (!group) return null;
+		var yes = group.querySelector('input[value="yes"]');
+		if (!yes || !yes.checked) return null;
+		return { install: { main_id: mainId, for_accessory_id: accId } };
+	}
+
+	// Expose so other functions in this IIFE can reach it.
+	window.sijabGetInstallItem = getInstallItemForAccessory;
+
 	// Init mobile toggle when DOM is ready
 	function initAll() {
 		initMobileToggle();
 		updateChecklistTotal();
 		observeMainPrice();
+		injectInstallRadios();
 		// Re-check a few times in case tax-toggle plugins apply visibility after our init.
 		setTimeout(updateChecklistTotal, 100);
 		setTimeout(updateChecklistTotal, 500);
 		setTimeout(updateChecklistTotal, 1500);
+		setTimeout(injectInstallRadios, 500);
 	}
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', initAll);

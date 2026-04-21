@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.32.6
+ * Version: 2.33.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -33,7 +33,9 @@ class SIJAB_Tillbehor {
 	const BUNDLE_META   = '_sijab_bundle_items';
 	const BUNDLE_FLAG   = '_sijab_is_bundle';
 	const REQ_META      = '_sijab_accessory_requirements';  // [ ['accessory_id'=>X, 'requires'=>[['product_id'=>Y,'qty'=>1],...]], ... ]
-	const VERSION       = '2.32.6';
+	const INST_META     = '_sijab_accessory_installations'; // [ ['accessory_id'=>X, 'tier'=>'liten|stor|custom', 'custom_price'=>0.0], ... ]
+	const INST_SKU      = 'ARB';                             // SKU of the "Montering" product used for installation line items.
+	const VERSION       = '2.33.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -42,6 +44,12 @@ class SIJAB_Tillbehor {
 
 	/** @var array<int, array<int, array<string, mixed>>> Companion-requirements map for the currently-rendering product (keyed by accessory_id). */
 	private $current_companions_map = [];
+
+	/** @var array<int, array<string, mixed>> Installation config map for the currently-rendering product (keyed by accessory_id). */
+	private $current_installations_map = [];
+
+	/** @var int|null Cached ARB-product ID (resolved by SKU). */
+	private $install_product_id = null;
 
 	public function __construct() {
 		// Frontend hooks — registered dynamically based on placement setting.
@@ -122,6 +130,18 @@ class SIJAB_Tillbehor {
 
 		// Hide internal plugin meta from admin order UI / customer emails.
 		add_filter( 'woocommerce_hidden_order_itemmeta', [ $this, 'hide_internal_item_meta' ] );
+
+		// ──────────────────────────────────────────────────────────────
+		// Installation line-item hooks (v2.33.0).
+		// ──────────────────────────────────────────────────────────────
+		// Apply the admin-configured install price to the ARB cart line.
+		add_action( 'woocommerce_before_calculate_totals', [ $this, 'apply_install_cart_price' ], 20, 1 );
+		// Survive cart-session reload: re-attach meta from session row.
+		add_filter( 'woocommerce_get_cart_item_from_session', [ $this, 'restore_install_cart_item' ], 10, 2 );
+		// Display "Monterar: Tanklock" in cart/checkout item meta.
+		add_filter( 'woocommerce_get_item_data', [ $this, 'display_install_item_data' ], 10, 2 );
+		// Override displayed product name on the ARB line: "Montering av Tanklock".
+		add_filter( 'woocommerce_cart_item_name', [ $this, 'filter_install_cart_item_name' ], 10, 3 );
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -845,6 +865,11 @@ class SIJAB_Tillbehor {
 		// frontend JS can look up which companions to show when an accessory
 		// is checked. The map is keyed by accessory product ID.
 		$this->emit_companion_meta( $product );
+
+		// Emit installation-config map for this main product (v2.33.0). Frontend
+		// JS reads window.sijabInstallations to render radio-buttons offering
+		// installation per accessory, at the tier-calculated price.
+		$this->emit_installations_meta( $product );
 
 		$s           = $this->get_settings();
 		$title       = $this->get_section_title( $product );
@@ -1705,6 +1730,106 @@ class SIJAB_Tillbehor {
 					</div>
 				</div>
 
+				<!-- 3c. Montering av tillbehör (v2.33.0) -->
+				<?php
+				$inst_rules = get_post_meta( $post->ID, self::INST_META, true );
+				if ( ! is_array( $inst_rules ) ) $inst_rules = [];
+
+				$arb_pid   = $this->get_install_product_id();
+				$arb_price = $arb_pid ? $this->get_install_base_price() : 0.0;
+
+				// Enrich with name + thumb for initial render.
+				$inst_rules_render = [];
+				foreach ( $inst_rules as $rule ) {
+					$acc_id = absint( $rule['accessory_id'] ?? 0 );
+					$tier   = (string) ( $rule['tier'] ?? 'liten' );
+					if ( ! $acc_id ) continue;
+					$acc = wc_get_product( $acc_id );
+					if ( ! $acc ) continue;
+					$inst_rules_render[] = [
+						'accessory_id'   => $acc_id,
+						'accessory_name' => html_entity_decode( wp_strip_all_tags( $acc->get_formatted_name() ) ),
+						'thumb'          => $acc->get_image_id() ? wp_get_attachment_image_url( $acc->get_image_id(), 'thumbnail' ) : wc_placeholder_img_src( 'thumbnail' ),
+						'tier'           => $tier,
+						'custom_price'   => (float) ( $rule['custom_price'] ?? 0.0 ),
+					];
+				}
+
+				// JSON for the hidden input (strip thumb/name which are only for UI).
+				$inst_json = array_map( function( $r ) {
+					return [
+						'accessory_id' => $r['accessory_id'],
+						'tier'         => $r['tier'],
+						'custom_price' => $r['custom_price'],
+					];
+				}, $inst_rules_render );
+				?>
+				<div class="sijab-acc-list-section">
+					<h4 class="sijab-acc-list-heading">
+						<?php esc_html_e( 'Montering av tillbehör', 'sijab-tillbehor' ); ?>
+						<span class="sijab-acc-list-hint"><?php esc_html_e( '(kunden väljer om monterings-hjälp ska läggas till)', 'sijab-tillbehor' ); ?></span>
+					</h4>
+					<p style="margin:0 0 8px; color:#555; font-size:12px;">
+						<?php esc_html_e( 'Konfigurera vilka tillbehör som kan erbjudas montering. Kunden ser en radio-knapp per tillbehör: "Ingen montering" eller "Jag vill ha hjälp med montering – X kr". Monterings-raden läggs som separat rad med SKU "ARB" i kundvagnen.', 'sijab-tillbehor' ); ?>
+					</p>
+
+					<?php if ( ! $arb_pid ) : ?>
+						<div class="notice notice-warning inline" style="margin:8px 0; padding:8px 12px;">
+							<p style="margin:0;"><strong><?php esc_html_e( 'Ingen monterings-produkt hittades.', 'sijab-tillbehor' ); ?></strong> <?php esc_html_e( 'Skapa en WooCommerce-produkt med SKU "ARB" och sätt ett basbelopp. Liten montering = 50 % av detta, Stor = 100 %.', 'sijab-tillbehor' ); ?></p>
+						</div>
+					<?php else : ?>
+						<p style="margin:0 0 10px; color:#333; font-size:12px;">
+							<?php
+							/* translators: %s: price formatted, e.g. "600,00 kr" */
+							printf( esc_html__( 'Bas-pris från ARB-produkten: %s — Liten = 50 %%, Stor = 100 %%, Eget = fast belopp.', 'sijab-tillbehor' ), wp_kses_post( wc_price( $arb_price ) ) );
+							?>
+						</p>
+					<?php endif; ?>
+
+					<input type="hidden" id="sijab_inst_json" name="sijab_accessory_installations_json" value="<?php echo esc_attr( wp_json_encode( $inst_json ) ); ?>" />
+
+					<ul id="sijab_inst_list" style="margin:0 0 12px; padding:0; list-style:none;">
+						<?php foreach ( $inst_rules_render as $rule ) : ?>
+							<li class="sijab-inst-rule" data-accessory-id="<?php echo absint( $rule['accessory_id'] ); ?>" style="background:#f9f9f9; border:1px solid #dcdcde; border-radius:4px; padding:10px 12px; margin-bottom:8px; display:flex; align-items:center; gap:10px;">
+								<img src="<?php echo esc_url( $rule['thumb'] ); ?>" width="32" height="32" style="object-fit:contain; border-radius:3px; border:1px solid #ddd; flex:0 0 auto;" alt="" />
+								<span class="sijab-inst-acc-name" style="flex:1; font-weight:600;"><?php echo esc_html( $rule['accessory_name'] ); ?></span>
+								<label style="flex:0 0 auto; display:flex; align-items:center; gap:6px; font-size:12px; color:#555;">
+									<?php esc_html_e( 'Nivå:', 'sijab-tillbehor' ); ?>
+									<select class="sijab-inst-tier" style="height:30px;">
+										<option value="liten" <?php selected( $rule['tier'], 'liten' ); ?>><?php esc_html_e( 'Liten (50 %)', 'sijab-tillbehor' ); ?></option>
+										<option value="stor" <?php selected( $rule['tier'], 'stor' ); ?>><?php esc_html_e( 'Stor (100 %)', 'sijab-tillbehor' ); ?></option>
+										<option value="custom" <?php selected( $rule['tier'], 'custom' ); ?>><?php esc_html_e( 'Eget pris', 'sijab-tillbehor' ); ?></option>
+									</select>
+								</label>
+								<input type="number" class="sijab-inst-custom-price" value="<?php echo esc_attr( $rule['custom_price'] > 0 ? wc_format_decimal( $rule['custom_price'] ) : '' ); ?>" min="0" step="0.01" placeholder="<?php esc_attr_e( 'kr', 'sijab-tillbehor' ); ?>" style="width:90px; <?php echo $rule['tier'] === 'custom' ? '' : 'display:none;'; ?>" />
+								<a href="#" class="sijab-inst-remove button-link-delete" style="flex:0 0 auto; color:#d63638;"><?php esc_html_e( 'Ta bort', 'sijab-tillbehor' ); ?></a>
+							</li>
+						<?php endforeach; ?>
+					</ul>
+					<p id="sijab_inst_empty_msg" style="color:#999; font-style:italic; <?php echo ! empty( $inst_rules_render ) ? 'display:none;' : ''; ?>"><?php esc_html_e( 'Ingen montering konfigurerad för något tillbehör.', 'sijab-tillbehor' ); ?></p>
+
+					<div id="sijab_inst_add" class="sijab-inst-add-wrap">
+						<p class="form-field sijab-ff">
+							<label for="sijab_inst_acc"><?php esc_html_e( 'Tillbehör', 'sijab-tillbehor' ); ?></label>
+							<span class="sijab-field-wrap">
+								<select class="wc-product-search" id="sijab_inst_acc" data-placeholder="<?php esc_attr_e( 'Välj bland produktens tillbehör…', 'sijab-tillbehor' ); ?>" data-action="woocommerce_json_search_products_and_variations" data-allow_clear="true" style="width:100%;"></select>
+							</span>
+						</p>
+						<p class="form-field sijab-ff">
+							<label for="sijab_inst_tier_new"><?php esc_html_e( 'Monteringsnivå', 'sijab-tillbehor' ); ?></label>
+							<span class="sijab-field-wrap">
+								<select id="sijab_inst_tier_new" style="height:32px;">
+									<option value="liten"><?php esc_html_e( 'Liten — 50 % av ARB', 'sijab-tillbehor' ); ?></option>
+									<option value="stor"><?php esc_html_e( 'Stor — 100 % av ARB', 'sijab-tillbehor' ); ?></option>
+									<option value="custom"><?php esc_html_e( 'Eget pris…', 'sijab-tillbehor' ); ?></option>
+								</select>
+								<input type="number" id="sijab_inst_custom_price_new" min="0" step="0.01" placeholder="<?php esc_attr_e( 'Belopp i kr', 'sijab-tillbehor' ); ?>" style="width:120px; margin-left:8px; display:none;" />
+								<button type="button" class="button button-primary" id="sijab_inst_add_btn" style="margin-left:8px;"><?php esc_html_e( 'Lägg till montering', 'sijab-tillbehor' ); ?></button>
+							</span>
+						</p>
+					</div>
+				</div>
+
 				<!-- 4. Länka till tillbehörskategori -->
 				<p class="form-field sijab-ff">
 					<label for="sijab_acc_category"><?php esc_html_e( 'Länka till tillbehörskategori', 'sijab-tillbehor' ); ?></label>
@@ -1813,6 +1938,11 @@ class SIJAB_Tillbehor {
 		// companion product (e.g. flödesmätare needs adapter to fit the tank).
 		// Stored as JSON on a hidden input so it survives WC's nested serialization.
 		$this->save_accessory_requirements( $product );
+
+		// Save per-accessory installation configuration (v2.33.0): admin
+		// assigns a tier (Liten/Stor/Eget pris) per accessory; customer sees
+		// a radio on the frontend to opt into installation.
+		$this->save_accessory_installations( $product );
 	}
 
 	/**
@@ -1860,6 +1990,152 @@ class SIJAB_Tillbehor {
 		} else {
 			$product->update_meta_data( self::REQ_META, $sanitized );
 		}
+	}
+
+	// ──────────────────────────────────────────────────────────────
+	// Installations (v2.33.0) — "Montering av tillbehör"
+	//
+	// Admin configures per (main product, accessory) which tier of
+	// installation is offered (Liten 50% of ARB price, Stor 100%, or
+	// Eget pris fixed amount). On frontend, customer sees radio:
+	//   ( ) Ingen montering
+	//   ( ) Jag vill ha hjälp med montering av X – 300 kr
+	// When they pick "yes", the ARB product is added to cart as an
+	// additional line item with custom price, tagged with meta pointing
+	// to the accessory it's for.
+	// ──────────────────────────────────────────────────────────────
+
+	/**
+	 * Resolve the ARB (installation) product ID by SKU. Cached per-request.
+	 */
+	private function get_install_product_id(): int {
+		if ( $this->install_product_id !== null ) return $this->install_product_id;
+		$id = wc_get_product_id_by_sku( self::INST_SKU );
+		$this->install_product_id = $id ? (int) $id : 0;
+		return $this->install_product_id;
+	}
+
+	/**
+	 * Get the base price of the ARB product (excluding tax).
+	 * Returns 0 if the product is missing or has no price.
+	 */
+	private function get_install_base_price(): float {
+		$pid = $this->get_install_product_id();
+		if ( ! $pid ) return 0.0;
+		$product = wc_get_product( $pid );
+		if ( ! $product ) return 0.0;
+		return (float) $product->get_price();
+	}
+
+	/**
+	 * Calculate the actual installation price for a given tier.
+	 * - liten:  50% of ARB base price
+	 * - stor:   100% of ARB base price
+	 * - custom: the stored custom_price (admin-specified)
+	 */
+	private function calc_install_price( string $tier, float $custom_price, float $base_price ): float {
+		switch ( $tier ) {
+			case 'liten':  return round( $base_price * 0.5, 2 );
+			case 'stor':   return round( $base_price * 1.0, 2 );
+			case 'custom': return round( (float) $custom_price, 2 );
+		}
+		return 0.0;
+	}
+
+	/**
+	 * Get the installation-config map for a main product.
+	 * Returns [ accessory_id => [ 'tier' => 'liten|stor|custom', 'custom_price' => 0.0 ] ]
+	 */
+	private function get_accessory_installations( int $main_product_id ): array {
+		$raw = get_post_meta( $main_product_id, self::INST_META, true );
+		if ( ! is_array( $raw ) ) return [];
+		$map = [];
+		foreach ( $raw as $rule ) {
+			$acc_id       = absint( $rule['accessory_id'] ?? 0 );
+			$tier         = (string) ( $rule['tier'] ?? '' );
+			$custom_price = (float) ( $rule['custom_price'] ?? 0.0 );
+			if ( ! $acc_id ) continue;
+			if ( ! in_array( $tier, [ 'liten', 'stor', 'custom' ], true ) ) continue;
+			$map[ $acc_id ] = [
+				'tier'         => $tier,
+				'custom_price' => $custom_price,
+			];
+		}
+		return $map;
+	}
+
+	/**
+	 * Parse and persist the installation-config JSON from the admin panel.
+	 */
+	private function save_accessory_installations( $product ): void {
+		$raw = $_POST['sijab_accessory_installations_json'] ?? '';
+		if ( ! is_string( $raw ) || $raw === '' ) {
+			$product->delete_meta_data( self::INST_META );
+			return;
+		}
+		$decoded = json_decode( wp_unslash( $raw ), true );
+		if ( ! is_array( $decoded ) ) {
+			$product->delete_meta_data( self::INST_META );
+			return;
+		}
+
+		$sanitized = [];
+		foreach ( $decoded as $rule ) {
+			if ( ! is_array( $rule ) ) continue;
+			$acc_id = absint( $rule['accessory_id'] ?? 0 );
+			$tier   = (string) ( $rule['tier'] ?? '' );
+			if ( ! $acc_id ) continue;
+			if ( ! in_array( $tier, [ 'liten', 'stor', 'custom' ], true ) ) continue;
+
+			$entry = [
+				'accessory_id' => $acc_id,
+				'tier'         => $tier,
+				'custom_price' => 0.0,
+			];
+			if ( $tier === 'custom' ) {
+				$entry['custom_price'] = max( 0, (float) ( $rule['custom_price'] ?? 0 ) );
+			}
+			$sanitized[] = $entry;
+		}
+
+		if ( empty( $sanitized ) ) {
+			$product->delete_meta_data( self::INST_META );
+		} else {
+			$product->update_meta_data( self::INST_META, $sanitized );
+		}
+	}
+
+	/**
+	 * Emit an inline <script> block exposing the installation-config map
+	 * for the current main product. Frontend JS reads window.sijabInstallations
+	 * to know which accessories have installation available and at what price.
+	 */
+	private function emit_installations_meta( WC_Product $main_product ): void {
+		$map = $this->get_accessory_installations( $main_product->get_id() );
+
+		// Cache on instance so row-rendering can detect accessories with install.
+		$this->current_installations_map = $map;
+
+		$main_id = $main_product->get_id();
+		if ( empty( $map ) ) {
+			echo '<script>window.sijabInstallations=window.sijabInstallations||{};window.sijabInstallations["' . esc_js( (string) $main_id ) . '"]={};</script>';
+			return;
+		}
+
+		$base_price = $this->get_install_base_price();
+		$enriched   = [];
+		foreach ( $map as $acc_id => $cfg ) {
+			$accessory = wc_get_product( $acc_id );
+			if ( ! $accessory ) continue;
+			$price = $this->calc_install_price( $cfg['tier'], (float) $cfg['custom_price'], $base_price );
+			$enriched[ $acc_id ] = [
+				'tier'            => $cfg['tier'],
+				'price'           => $price,
+				'price_formatted' => html_entity_decode( wp_strip_all_tags( wc_price( $price ) ) ),
+				'accessory_name'  => html_entity_decode( wp_strip_all_tags( $accessory->get_name() ) ),
+			];
+		}
+		echo '<script>window.sijabInstallations=window.sijabInstallations||{};window.sijabInstallations["' . esc_js( (string) $main_id ) . '"]=' . wp_json_encode( $enriched ) . ';</script>';
 	}
 
 	/**
@@ -2582,9 +2858,111 @@ class SIJAB_Tillbehor {
 				if (!rule.find('.sijab-req-reqs li').length) rule.remove();
 				syncReqJson();
 			});
+
+			// ────────────────────────────────────────────────────────
+			// Installations UI (v2.33.0)
+			// ────────────────────────────────────────────────────────
+			window.sijabSyncInstJson = function() {
+				var rules = [];
+				$('#sijab_inst_list .sijab-inst-rule').each(function(){
+					var li = $(this);
+					var accId = parseInt(li.data('accessory-id'), 10) || 0;
+					if (!accId) return;
+					var tier = li.find('.sijab-inst-tier').val() || 'liten';
+					var customPrice = 0;
+					if (tier === 'custom') {
+						customPrice = parseFloat(li.find('.sijab-inst-custom-price').val()) || 0;
+					}
+					rules.push({ accessory_id: accId, tier: tier, custom_price: customPrice });
+				});
+				$('#sijab_inst_json').val(JSON.stringify(rules));
+				if (rules.length) { $('#sijab_inst_empty_msg').hide(); } else { $('#sijab_inst_empty_msg').show(); }
+			};
+
+			// Toggle custom-price input visibility when the 'add-new' tier changes.
+			$('#sijab_inst_tier_new').on('change', function(){
+				if ($(this).val() === 'custom') {
+					$('#sijab_inst_custom_price_new').show().focus();
+				} else {
+					$('#sijab_inst_custom_price_new').hide().val('');
+				}
+			});
+
+			// Toggle per-row custom-price visibility when a saved row's tier changes.
+			$(document).on('change', '.sijab-inst-tier', function(){
+				var li = $(this).closest('.sijab-inst-rule');
+				var cp = li.find('.sijab-inst-custom-price');
+				if ($(this).val() === 'custom') { cp.show(); } else { cp.hide().val(''); }
+				window.sijabSyncInstJson();
+			});
+			$(document).on('input change', '.sijab-inst-custom-price', function(){ window.sijabSyncInstJson(); });
+
+			$('#sijab_inst_add_btn').on('click', function(){
+				var accSel = $('#sijab_inst_acc');
+				var accId = parseInt(accSel.val(), 10) || 0;
+				if (!accId) { alert('" . esc_js( __( 'Välj ett tillbehör först.', 'sijab-tillbehor' ) ) . "'); return; }
+				if ($('#sijab_inst_list .sijab-inst-rule[data-accessory-id=\"' + accId + '\"]').length) {
+					alert('" . esc_js( __( 'Detta tillbehör har redan en monterings-konfiguration.', 'sijab-tillbehor' ) ) . "');
+					return;
+				}
+				var tier = $('#sijab_inst_tier_new').val() || 'liten';
+				var customPrice = 0;
+				if (tier === 'custom') {
+					customPrice = parseFloat($('#sijab_inst_custom_price_new').val()) || 0;
+					if (!customPrice || customPrice <= 0) { alert('" . esc_js( __( 'Ange ett pris för egen monteringsnivå.', 'sijab-tillbehor' ) ) . "'); return; }
+				}
+				// Fetch thumb + name via existing AJAX endpoint so row can render with image.
+				var accName = accSel.find('option:selected').text() || ('#' + accId);
+				var payload = new FormData();
+				payload.append('action', 'sijab_get_product_thumb');
+				payload.append('product_id', accId);
+				payload.append('nonce', '" . esc_js( wp_create_nonce( 'sijab_get_product_thumb' ) ) . "');
+				fetch(ajaxurl, { method: 'POST', body: payload, credentials: 'same-origin' })
+					.then(function(r){ return r.json(); })
+					.then(function(res){
+						var thumb = (res && res.data && res.data.thumb) ? res.data.thumb : '';
+						var customDisplay = (tier === 'custom') ? '' : 'display:none;';
+						var li = $(
+							'<li class=\"sijab-inst-rule\" data-accessory-id=\"' + accId + '\" style=\"background:#f9f9f9; border:1px solid #dcdcde; border-radius:4px; padding:10px 12px; margin-bottom:8px; display:flex; align-items:center; gap:10px;\">' +
+								(thumb ? '<img src=\"' + thumb + '\" width=\"32\" height=\"32\" style=\"object-fit:contain; border-radius:3px; border:1px solid #ddd; flex:0 0 auto;\" alt=\"\" />' : '<span style=\"width:32px; height:32px; flex:0 0 auto;\"></span>') +
+								'<span class=\"sijab-inst-acc-name\" style=\"flex:1; font-weight:600;\"></span>' +
+								'<label style=\"flex:0 0 auto; display:flex; align-items:center; gap:6px; font-size:12px; color:#555;\">' +
+									'" . esc_js( __( 'Nivå:', 'sijab-tillbehor' ) ) . " ' +
+									'<select class=\"sijab-inst-tier\" style=\"height:30px;\">' +
+										'<option value=\"liten\">" . esc_js( __( 'Liten (50 %)', 'sijab-tillbehor' ) ) . "</option>' +
+										'<option value=\"stor\">" . esc_js( __( 'Stor (100 %)', 'sijab-tillbehor' ) ) . "</option>' +
+										'<option value=\"custom\">" . esc_js( __( 'Eget pris', 'sijab-tillbehor' ) ) . "</option>' +
+									'</select>' +
+								'</label>' +
+								'<input type=\"number\" class=\"sijab-inst-custom-price\" min=\"0\" step=\"0.01\" placeholder=\"" . esc_js( __( 'kr', 'sijab-tillbehor' ) ) . "\" style=\"width:90px; ' + customDisplay + '\" />' +
+								'<a href=\"#\" class=\"sijab-inst-remove button-link-delete\" style=\"flex:0 0 auto; color:#d63638;\">" . esc_js( __( 'Ta bort', 'sijab-tillbehor' ) ) . "</a>' +
+							'</li>'
+						);
+						li.find('.sijab-inst-acc-name').text(accName);
+						li.find('.sijab-inst-tier').val(tier);
+						if (tier === 'custom') { li.find('.sijab-inst-custom-price').val(customPrice); }
+						$('#sijab_inst_list').append(li);
+						// Reset form inputs.
+						accSel.val('').trigger('change');
+						$('#sijab_inst_tier_new').val('liten').trigger('change');
+						$('#sijab_inst_custom_price_new').val('');
+						window.sijabSyncInstJson();
+					})
+					.catch(function(){ /* ignore thumb fetch failures — row still renders */ });
+			});
+
+			$(document).on('click', '.sijab-inst-remove', function(e){
+				e.preventDefault();
+				$(this).closest('.sijab-inst-rule').remove();
+				window.sijabSyncInstJson();
+			});
 		});
 			// Safety: always sync JSON right before form submit.
-			$('#post').on('submit', function() { syncJson(); if (typeof window.sijabSyncReqJson === 'function') window.sijabSyncReqJson(); });
+			$('#post').on('submit', function() {
+				syncJson();
+				if (typeof window.sijabSyncReqJson === 'function') window.sijabSyncReqJson();
+				if (typeof window.sijabSyncInstJson === 'function') window.sijabSyncInstJson();
+			});
 		";
 		wp_add_inline_script( 'jquery-ui-sortable', $js );
 	}
@@ -3656,6 +4034,58 @@ class SIJAB_Tillbehor {
 		foreach ( $items as $item ) {
 			if ( ! is_array( $item ) ) continue;
 
+			// ──────────────────────────────────────────────────────────
+			// Installation line item (v2.33.0).
+			// When the frontend signals that installation should be added
+			// for an accessory, we look up the admin-configured tier on
+			// the main product, compute the real price server-side, and
+			// add the ARB product as its own cart line with meta linking
+			// it back to the accessory it's for.
+			// ──────────────────────────────────────────────────────────
+			if ( isset( $item['install'] ) && is_array( $item['install'] ) ) {
+				$main_id        = absint( $item['install']['main_id'] ?? 0 );
+				$for_acc_id     = absint( $item['install']['for_accessory_id'] ?? 0 );
+				if ( ! $main_id || ! $for_acc_id ) continue;
+
+				$inst_map = $this->get_accessory_installations( $main_id );
+				if ( empty( $inst_map[ $for_acc_id ] ) ) continue;  // not configured — reject
+
+				$cfg        = $inst_map[ $for_acc_id ];
+				$base_price = $this->get_install_base_price();
+				$price      = $this->calc_install_price( $cfg['tier'], (float) $cfg['custom_price'], $base_price );
+				if ( $price <= 0 ) continue;
+
+				$arb_id = $this->get_install_product_id();
+				if ( ! $arb_id ) continue;
+
+				$acc_product = wc_get_product( $for_acc_id );
+				$acc_name    = $acc_product ? html_entity_decode( wp_strip_all_tags( $acc_product->get_name() ) ) : '';
+
+				// Tag with parent so order-time bundle-grouping can link
+				// it visually with the accessory / main product.
+				$_REQUEST['sijab_acc_parent'] = $main_id;
+
+				$cart_key = WC()->cart->add_to_cart( $arb_id, 1, 0, [], [
+					'_sijab_install_price'        => $price,
+					'_sijab_install_for_acc_id'   => $for_acc_id,
+					'_sijab_install_for_acc_name' => $acc_name,
+					'_sijab_install_tier'         => $cfg['tier'],
+					'_sijab_bundled_by'           => $main_id,
+					// Include a unique token so WC doesn't merge multiple
+					// install lines (e.g. two different accessories with
+					// montering on the same cart) into one row.
+					'_sijab_install_unique'       => wp_generate_uuid4(),
+				] );
+				unset( $_REQUEST['sijab_acc_parent'] );
+
+				if ( $cart_key ) {
+					$added_keys[] = $cart_key;
+				} else {
+					$errors[] = $arb_id;
+				}
+				continue;
+			}
+
 			$product_id   = absint( $item['product_id'] ?? 0 );
 			$variation_id = absint( $item['variation_id'] ?? 0 );
 			$quantity     = max( 1, absint( $item['quantity'] ?? 1 ) );
@@ -3825,6 +4255,24 @@ class SIJAB_Tillbehor {
 	public function save_accessory_meta_to_order( $item, $cart_item_key, $values, $order ): void {
 		if ( ! empty( $values['_sijab_acc_parent'] ) ) {
 			$item->add_meta_data( '_sijab_acc_parent', absint( $values['_sijab_acc_parent'] ), true );
+		}
+		// Persist installation meta onto the order line so it survives to
+		// admin/email views, and so the display name "Montering av X" can
+		// be reconstructed from order data later if needed.
+		if ( ! empty( $values['_sijab_install_for_acc_id'] ) ) {
+			$item->add_meta_data( '_sijab_install_for_acc_id', absint( $values['_sijab_install_for_acc_id'] ), true );
+			$item->add_meta_data( '_sijab_install_for_acc_name', wc_clean( (string) ( $values['_sijab_install_for_acc_name'] ?? '' ) ), true );
+			$item->add_meta_data( '_sijab_install_tier', wc_clean( (string) ( $values['_sijab_install_tier'] ?? '' ) ), true );
+			$item->add_meta_data( '_sijab_install_price', (float) ( $values['_sijab_install_price'] ?? 0 ), true );
+			if ( ! empty( $values['_sijab_bundled_by'] ) ) {
+				$item->add_meta_data( '_sijab_bundled_by', absint( $values['_sijab_bundled_by'] ), true );
+			}
+			// Public, visible meta that shows "Monterar: Tanklock" in admin
+			// order view and email (unlike the underscore-prefixed internals).
+			$acc_name = wc_clean( (string) ( $values['_sijab_install_for_acc_name'] ?? '' ) );
+			if ( $acc_name !== '' ) {
+				$item->add_meta_data( __( 'Monterar', 'sijab-tillbehor' ), $acc_name, true );
+			}
 		}
 	}
 
@@ -4110,7 +4558,83 @@ class SIJAB_Tillbehor {
 		$hidden[] = '_sijab_acc_parent';
 		$hidden[] = '_sijab_bundled_by';
 		$hidden[] = '_sijab_bundle_components_added';
+		// Installation meta (v2.33.0) — price + accessory-name are displayed
+		// via the cart item name/data filters; the raw keys themselves are
+		// internal and shouldn't leak to admin/email UIs.
+		$hidden[] = '_sijab_install_price';
+		$hidden[] = '_sijab_install_for_acc_id';
+		$hidden[] = '_sijab_install_for_acc_name';
+		$hidden[] = '_sijab_install_tier';
+		$hidden[] = '_sijab_install_unique';
 		return $hidden;
+	}
+
+	// ──────────────────────────────────────────────────────────────
+	// Installation cart / order display hooks (v2.33.0)
+	// ──────────────────────────────────────────────────────────────
+
+	/**
+	 * Apply the admin-configured installation price to the ARB cart line item.
+	 * Runs on every cart recalculation so the price survives updates.
+	 */
+	public function apply_install_cart_price( $cart ): void {
+		if ( ! $cart || ! is_a( $cart, 'WC_Cart' ) ) return;
+		if ( did_action( 'woocommerce_before_calculate_totals' ) >= 2 && doing_action( 'woocommerce_before_calculate_totals' ) ) {
+			// Avoid infinite recursion via nested actions.
+		}
+		foreach ( $cart->get_cart() as $cart_item ) {
+			if ( empty( $cart_item['_sijab_install_price'] ) ) continue;
+			$price = (float) $cart_item['_sijab_install_price'];
+			if ( $price <= 0 ) continue;
+			if ( isset( $cart_item['data'] ) && is_a( $cart_item['data'], 'WC_Product' ) ) {
+				$cart_item['data']->set_price( $price );
+			}
+		}
+	}
+
+	/**
+	 * Re-attach installation meta to cart items loaded from session so the
+	 * custom price / display data survive across page loads.
+	 */
+	public function restore_install_cart_item( array $cart_item, array $values ): array {
+		$keys = [ '_sijab_install_price', '_sijab_install_for_acc_id', '_sijab_install_for_acc_name', '_sijab_install_tier', '_sijab_install_unique' ];
+		foreach ( $keys as $k ) {
+			if ( isset( $values[ $k ] ) && ! isset( $cart_item[ $k ] ) ) {
+				$cart_item[ $k ] = $values[ $k ];
+			}
+		}
+		return $cart_item;
+	}
+
+	/**
+	 * Show "Monterar: Tanklock" as item-data in cart and checkout for
+	 * installation line items.
+	 */
+	public function display_install_item_data( array $item_data, array $cart_item ): array {
+		if ( empty( $cart_item['_sijab_install_for_acc_name'] ) ) return $item_data;
+		$item_data[] = [
+			'key'     => __( 'Monterar', 'sijab-tillbehor' ),
+			'value'   => wc_clean( (string) $cart_item['_sijab_install_for_acc_name'] ),
+			'display' => '',
+		];
+		return $item_data;
+	}
+
+	/**
+	 * Replace the plain product name "Montering" with "Montering av <accessory>"
+	 * on the ARB cart line so customers immediately see what's being installed.
+	 */
+	public function filter_install_cart_item_name( $name, $cart_item, $cart_item_key ) {
+		if ( empty( $cart_item['_sijab_install_for_acc_name'] ) ) return $name;
+		$acc_name = wc_clean( (string) $cart_item['_sijab_install_for_acc_name'] );
+		/* translators: %s: accessory name, e.g. "Tanklock" */
+		$label = sprintf( esc_html__( 'Montering av %s', 'sijab-tillbehor' ), esc_html( $acc_name ) );
+
+		// Preserve any surrounding anchor tag WC may have wrapped around the name.
+		if ( is_string( $name ) && strpos( $name, '</a>' ) !== false ) {
+			return preg_replace( '#(<a[^>]*>)[^<]*</a>#i', '$1' . $label . '</a>', $name, 1 );
+		}
+		return $label;
 	}
 
 	public function add_bundle_component_lines( $order_id ): void {
