@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.33.0
+ * Version: 2.33.1
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -35,7 +35,7 @@ class SIJAB_Tillbehor {
 	const REQ_META      = '_sijab_accessory_requirements';  // [ ['accessory_id'=>X, 'requires'=>[['product_id'=>Y,'qty'=>1],...]], ... ]
 	const INST_META     = '_sijab_accessory_installations'; // [ ['accessory_id'=>X, 'tier'=>'liten|stor|custom', 'custom_price'=>0.0], ... ]
 	const INST_SKU      = 'ARB';                             // SKU of the "Montering" product used for installation line items.
-	const VERSION       = '2.33.0';
+	const VERSION       = '2.33.1';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -831,10 +831,25 @@ class SIJAB_Tillbehor {
 	 */
 	public function filter_body_class( $classes ) {
 		if ( ! function_exists( 'is_product' ) || ! is_product() ) return $classes;
+
 		$s = $this->get_settings();
-		if ( ! empty( $s['layout'] ) ) {
-			$classes[] = 'sijab-layout-' . sanitize_html_class( $s['layout'] );
+		if ( empty( $s['layout'] ) ) return $classes;
+
+		// Only add the layout body class when this product ACTUALLY has accessories.
+		// Otherwise the cards-layout CSS would hide the default WC add-to-cart
+		// button without rendering a replacement bundle CTA — leaving the product
+		// page with no add-to-cart at all.
+		global $product;
+		if ( ! $product instanceof WC_Product ) {
+			$pid = get_the_ID();
+			if ( $pid ) $product = wc_get_product( $pid );
 		}
+		if ( $product instanceof WC_Product ) {
+			$ids = $this->get_accessory_ids( $product->get_id() );
+			if ( empty( $ids ) ) return $classes;  // no accessories → no layout class
+		}
+
+		$classes[] = 'sijab-layout-' . sanitize_html_class( $s['layout'] );
 		return $classes;
 	}
 
