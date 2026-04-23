@@ -3,7 +3,7 @@
 ## Overview
 WooCommerce plugin that displays product accessories on the single product page. Supports five layouts, popup-driven required-companion rules, and tight integration with Svea Checkout + Visma.net via Sharespine.
 
-- **Current version:** 2.33.2
+- **Current version:** 2.33.3
 - **GitHub repo:** `stainzor/accessory-tab` (private)
 - **Test server:** test.sijab.com
 - **Production:** sijab.com
@@ -108,13 +108,15 @@ Feature: admin configures `(accessory → required product)` rules per main prod
 - **Cards/checklist flow:** popup commits companions to `sijabPendingCompanions[accId]` → bundle CTA adds main+accessory+companions via `sijab_bundle_add_to_cart`
 - **Horizontal/grid/compact flow:** popup directly triggers `sendHorizontalBundleAdd()` which posts items to `sijab_bundle_add_to_cart`. Main product included with `skip_if_in_cart: true` flag — server dedups against current cart.
 
-### Bundle → Order: component lines (v2.31.11+)
+### Bundle → Order: component lines (v2.31.11+, refined in v2.33.3)
 **CRITICAL** — previous destructive remove+re-add pattern broke Svea/Sharespine callbacks and left paid orders stuck in "Behandlas". Now:
 
-- Hook ONLY on `woocommerce_order_status_completed` priority 20 (not processing, not payment_complete — those race with Svea)
+- Hook on `woocommerce_order_status_processing` **AND** `woocommerce_order_status_completed`, both priority 20 (v2.33.3+)
 - Non-destructive: only **append** component lines; existing items + their meta (`_svea_co_cart_key`, etc.) untouched
-- Idempotent via `_sijab_bundle_components_added` flag
+- Idempotent via `_sijab_bundle_components_added` flag — prevents double-run when order transitions processing → completed
 - Stock-protect: `woocommerce_order_item_quantity` returns 0 for items with `_sijab_bundled_by` meta
+
+**Why both `processing` AND `completed`?** Sharespine syncs orders to Visma at `processing` (so components must be in place by then). `completed` kept as backup/fallback for edge cases where Visma sync hasn't run yet. v2.31.11 only kept `completed` which caused components to disappear from Visma (v2.33.3 regression fix).
 
 ### Hidden internal meta (v2.31.11+)
 `_sijab_acc_parent`, `_sijab_bundled_by`, `_sijab_bundle_components_added`, and (v2.33.0+) `_sijab_install_price`, `_sijab_install_for_acc_id`, `_sijab_install_for_acc_name`, `_sijab_install_tier`, `_sijab_install_unique` are hidden from admin order UI + customer emails via `woocommerce_hidden_order_itemmeta` filter.
@@ -198,6 +200,7 @@ Outline pill button matching the filled LÄGG TILL style — pill shape, primary
 - **2.33.0** (2026-04-21) — **Installation per accessory** ("Montering av tillbehör"). Admin configures Liten (50 % av ARB) / Stor (100 %) / Eget pris per (main, accessory). Kund ser radio "Ingen montering" / "Jag vill ha hjälp med montering av X – Y kr". ARB-produkten (SKU `ARB`) läggs som separat kundvagnsrad med beräknat pris + meta som länkar tillbaka till tillbehöret. Scope-lucka: horisontell/grid/kompakt UTAN popup-companions använder WC:s standard-LÄGG-TILL-knapp, där install-radion syns men inte inkluderas i single-item-add (fungerar via cards/checklist eller så snart en popup-regel konfigureras). Se "Installation-per-accessory" sektion ovan.
 - **2.33.1** — Only emit `sijab-layout-cards` body class when product has accessories (avoids cards-layout CSS leaking into product pages without accessories).
 - **2.33.2** — Also require *visible* accessories before adding layout body class (follow-up tightening of the v2.33.1 check).
+- **2.33.3** (2026-04-23) — 🔴 **Regression fix:** bundle components were missing from Visma after v2.31.11. Restored the `woocommerce_order_status_processing` hook alongside `completed` so Sharespine picks up components at Visma sync time. Safe because the current implementation is append-only + idempotent (unlike the pre-v2.31.11 destructive pattern that broke Svea).
 
 ## Pending / Future
 - Reservdelar (spare parts) list — designed but not built (candidate för v2.34.0 eller senare)

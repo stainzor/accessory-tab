@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.33.2
+ * Version: 2.33.3
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -35,7 +35,7 @@ class SIJAB_Tillbehor {
 	const REQ_META      = '_sijab_accessory_requirements';  // [ ['accessory_id'=>X, 'requires'=>[['product_id'=>Y,'qty'=>1],...]], ... ]
 	const INST_META     = '_sijab_accessory_installations'; // [ ['accessory_id'=>X, 'tier'=>'liten|stor|custom', 'custom_price'=>0.0], ... ]
 	const INST_SKU      = 'ARB';                             // SKU of the "Montering" product used for installation line items.
-	const VERSION       = '2.33.2';
+	const VERSION       = '2.33.3';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -116,14 +116,24 @@ class SIJAB_Tillbehor {
 		add_action( 'woocommerce_order_status_completed', [ $this, 'record_accessory_purchases' ] );
 		add_action( 'woocommerce_order_status_processing', [ $this, 'record_accessory_purchases' ] );
 
-		// Bundle → order: add component line items only after the order has
-		// reached 'completed' status. We previously also hooked 'processing'
-		// and 'payment_complete', but those fire while Svea Checkout is still
-		// finalizing the order — and our destructive remove+re-add pattern
-		// changed order-item IDs mid-flow, which could leave the order in a
-		// limbo state (Svea callback lookups failing against new IDs).
-		// Only 'completed' is safe: by then Svea is fully done with the order.
-		add_action( 'woocommerce_order_status_completed', [ $this, 'add_bundle_component_lines' ], 20, 1 );
+		// Bundle → order: add component line items when the order reaches
+		// either 'processing' (typical Svea post-payment state) OR 'completed'.
+		//
+		// HISTORICAL CONTEXT (v2.31.11): we previously hooked 'processing' +
+		// 'payment_complete' with a DESTRUCTIVE remove+re-add pattern that
+		// changed order-item IDs mid-flow. That race-conditioned with Svea's
+		// post-payment callbacks (keyed on _svea_co_cart_key) and left paid
+		// orders stuck in limbo. The v2.31.11 fix was to (a) switch to a
+		// non-destructive APPEND-only implementation, AND (b) delay to the
+		// 'completed' hook. (b) turned out to be too aggressive — Sharespine
+		// syncs orders to Visma when they hit 'processing', so components
+		// added only at 'completed' never reached Visma (v2.33.3 regression
+		// fix). (a) alone is sufficient for Svea safety; order-item IDs and
+		// meta stay intact regardless of timing. The idempotency flag
+		// (_sijab_bundle_components_added) prevents double-execution when
+		// an order transitions processing → completed.
+		add_action( 'woocommerce_order_status_processing', [ $this, 'add_bundle_component_lines' ], 20, 1 );
+		add_action( 'woocommerce_order_status_completed',  [ $this, 'add_bundle_component_lines' ], 20, 1 );
 
 		// Prevent stock reduction for bundle component lines (return qty 0).
 		add_filter( 'woocommerce_order_item_quantity', [ $this, 'zero_component_stock_qty' ], 10, 3 );
