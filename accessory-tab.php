@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.33.3
+ * Version: 2.33.4
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -35,7 +35,7 @@ class SIJAB_Tillbehor {
 	const REQ_META      = '_sijab_accessory_requirements';  // [ ['accessory_id'=>X, 'requires'=>[['product_id'=>Y,'qty'=>1],...]], ... ]
 	const INST_META     = '_sijab_accessory_installations'; // [ ['accessory_id'=>X, 'tier'=>'liten|stor|custom', 'custom_price'=>0.0], ... ]
 	const INST_SKU      = 'ARB';                             // SKU of the "Montering" product used for installation line items.
-	const VERSION       = '2.33.3';
+	const VERSION       = '2.33.4';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -1007,7 +1007,7 @@ class SIJAB_Tillbehor {
 				   data-product_id="<?php echo esc_attr( $acc_id ); ?>"
 				   data-product_sku="<?php echo esc_attr( $acc->get_sku() ); ?>"
 				   data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>"
-				   <?php if ( $this->accessory_has_companions( $acc_id ) ) : ?>data-has-companions="1" data-main-product="<?php echo esc_attr( $parent_id ); ?>"<?php endif; ?>>
+				   <?php echo $this->emit_accessory_data_attrs( $acc_id, $parent_id ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped — helper handles esc_attr internally ?>>
 					<?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?>
 				</a>
 			<?php else : ?>
@@ -1185,7 +1185,7 @@ class SIJAB_Tillbehor {
 					       data-price-incl="<?php echo esc_attr( $acc_price_incl ); ?>"
 					       data-add_to_cart_url="<?php echo esc_url( $acc->add_to_cart_url() ); ?>"
 					       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>"
-					       <?php if ( $this->accessory_has_companions( $acc_id ) ) : ?>data-has-companions="1" data-main-product="<?php echo esc_attr( $parent_id ); ?>"<?php endif; ?> />
+					       <?php echo $this->emit_accessory_data_attrs( $acc_id, $parent_id ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped — helper handles esc_attr internally ?> />
 				</label>
 			<?php elseif ( $is_variable ) : ?>
 				<label class="sijab-checklist__checkbox sijab-checklist__checkbox--variable">
@@ -1198,7 +1198,7 @@ class SIJAB_Tillbehor {
 					       data-price-excl="0"
 					       data-price-incl="0"
 					       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>"
-					       <?php if ( $this->accessory_has_companions( $acc_id ) ) : ?>data-has-companions="1" data-main-product="<?php echo esc_attr( $parent_id ); ?>"<?php endif; ?> />
+					       <?php echo $this->emit_accessory_data_attrs( $acc_id, $parent_id ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped — helper handles esc_attr internally ?> />
 				</label>
 			<?php else : ?>
 				<span class="sijab-checklist__checkbox sijab-checklist__checkbox--disabled">
@@ -1360,7 +1360,7 @@ class SIJAB_Tillbehor {
 				       data-price-incl="<?php echo esc_attr( $acc_price_incl ); ?>"
 				       data-add_to_cart_url="<?php echo esc_url( $acc->add_to_cart_url() ); ?>"
 				       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>"
-				       <?php if ( $this->accessory_has_companions( $acc_id ) ) : ?>data-has-companions="1" data-main-product="<?php echo esc_attr( $parent_id ); ?>"<?php endif; ?> />
+				       <?php echo $this->emit_accessory_data_attrs( $acc_id, $parent_id ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped — helper handles esc_attr internally ?> />
 			<?php elseif ( $is_variable ) : ?>
 				<input type="checkbox"
 				       class="sijab-checklist__input kr-card__input"
@@ -1371,7 +1371,7 @@ class SIJAB_Tillbehor {
 				       data-price-excl="0"
 				       data-price-incl="0"
 				       data-sijab_acc_parent="<?php echo esc_attr( $parent_id ); ?>"
-				       <?php if ( $this->accessory_has_companions( $acc_id ) ) : ?>data-has-companions="1" data-main-product="<?php echo esc_attr( $parent_id ); ?>"<?php endif; ?> />
+				       <?php echo $this->emit_accessory_data_attrs( $acc_id, $parent_id ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped — helper handles esc_attr internally ?> />
 			<?php else : ?>
 				<input type="checkbox" class="kr-card__input" disabled />
 			<?php endif; ?>
@@ -1537,7 +1537,7 @@ class SIJAB_Tillbehor {
 							   data-product_id="<?php echo absint( $id ); ?>"
 							   data-product_sku="<?php echo esc_attr( $sku ); ?>"
 							   data-sijab_acc_parent="<?php echo absint( $GLOBALS['product']->get_id() ); ?>"
-							   <?php if ( $this->accessory_has_companions( $id ) ) : ?>data-has-companions="1" data-main-product="<?php echo absint( $GLOBALS['product']->get_id() ); ?>"<?php endif; ?>
+							   <?php echo $this->emit_accessory_data_attrs( (int) $id, (int) $GLOBALS['product']->get_id() ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped — helper handles esc_attr internally ?>
 							   aria-label="<?php echo esc_attr( $acc->add_to_cart_description() ); ?>"
 							   rel="nofollow">
 								<?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?>
@@ -2264,6 +2264,39 @@ class SIJAB_Tillbehor {
 	 */
 	private function accessory_has_companions( int $accessory_id ): bool {
 		return ! empty( $this->current_companions_map[ $accessory_id ] );
+	}
+
+	/**
+	 * Check if the given accessory has an installation configuration for the
+	 * current main product. Populated by emit_installations_meta() before the
+	 * accessory list is rendered.
+	 */
+	private function accessory_has_installation( int $accessory_id ): bool {
+		return ! empty( $this->current_installations_map[ $accessory_id ] );
+	}
+
+	/**
+	 * Emit HTML data-attributes on an accessory checkbox / add-to-cart button so
+	 * the frontend JS can correlate the accessory with its main product — needed
+	 * for both popup-companions (v2.32.0+) and installation radios (v2.33.0+).
+	 *
+	 * Returns a string ready to echo inside a tag; includes a leading space.
+	 *
+	 * - `data-main-product` fires whenever EITHER feature is configured. Before
+	 *   v2.33.4 this was only emitted when the accessory had companions, which
+	 *   broke install detection on accessories without companion rules (the
+	 *   "enkel produkt utan companions"-case).
+	 * - `data-has-companions="1"` fires only when companions are configured.
+	 */
+	private function emit_accessory_data_attrs( int $accessory_id, int $parent_id ): string {
+		$has_comp = $this->accessory_has_companions( $accessory_id );
+		$has_inst = $this->accessory_has_installation( $accessory_id );
+		if ( ! $has_comp && ! $has_inst ) return '';
+		$out = ' data-main-product="' . esc_attr( (string) $parent_id ) . '"';
+		if ( $has_comp ) {
+			$out .= ' data-has-companions="1"';
+		}
+		return $out;
 	}
 
 	public function enqueue_admin_css( $hook ): void {

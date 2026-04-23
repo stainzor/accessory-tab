@@ -3,7 +3,7 @@
 ## Overview
 WooCommerce plugin that displays product accessories on the single product page. Supports five layouts, popup-driven required-companion rules, and tight integration with Svea Checkout + Visma.net via Sharespine.
 
-- **Current version:** 2.33.3
+- **Current version:** 2.33.4
 - **GitHub repo:** `stainzor/accessory-tab` (private)
 - **Test server:** test.sijab.com
 - **Production:** sijab.com
@@ -201,6 +201,7 @@ Outline pill button matching the filled LÄGG TILL style — pill shape, primary
 - **2.33.1** — Only emit `sijab-layout-cards` body class when product has accessories (avoids cards-layout CSS leaking into product pages without accessories).
 - **2.33.2** — Also require *visible* accessories before adding layout body class (follow-up tightening of the v2.33.1 check).
 - **2.33.3** (2026-04-23) — 🔴 **Regression fix:** bundle components were missing from Visma after v2.31.11. Restored the `woocommerce_order_status_processing` hook alongside `completed` so Sharespine picks up components at Visma sync time. Safe because the current implementation is append-only + idempotent (unlike the pre-v2.31.11 destructive pattern that broke Svea).
+- **2.33.4** (2026-04-23) — 🔴 **Fix:** installation radios weren't showing on accessories *without* companion rules (i.e. simple-product accessories where the v2.32.0 popup isn't used). Root cause: `data-main-product` attribute was emitted inside the `accessory_has_companions()` conditional, and the frontend JS keys install-lookup off that attribute. Refactored all 6 emission sites into a shared `emit_accessory_data_attrs()` helper that fires `data-main-product` when EITHER companions OR installation is configured, and added an `accessory_has_installation()` detection helper mirroring the companions one.
 
 ## Pending / Future
 - Reservdelar (spare parts) list — designed but not built (candidate för v2.34.0 eller senare)
