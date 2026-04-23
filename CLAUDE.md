@@ -3,7 +3,7 @@
 ## Overview
 WooCommerce plugin that displays product accessories on the single product page. Supports five layouts, popup-driven required-companion rules, and tight integration with Svea Checkout + Visma.net via Sharespine.
 
-- **Current version:** 2.32.6
+- **Current version:** 2.33.2
 - **GitHub repo:** `stainzor/accessory-tab` (private)
 - **Test server:** test.sijab.com
 - **Production:** sijab.com
@@ -75,11 +75,27 @@ Stored in user's Claude memory file (`MEMORY.md`), NOT in source code. Never com
   - `META_KEY = '_sijab_accessories_ids'`
   - `BUNDLE_META = '_sijab_bundle_items'`, `BUNDLE_FLAG = '_sijab_is_bundle'`
   - `REQ_META = '_sijab_accessory_requirements'` (v2.32.0+)
+  - `INST_META = '_sijab_accessory_installations'` (v2.33.0+)
+  - `INST_SKU = 'ARB'` (v2.33.0+) — SKU of the "Montering"-product used for installation line items
   - `STATS_TABLE = 'sijab_acc_stats'` (`wp_sijab_acc_stats`)
 - **Settings:** `sijab_tillbehor_settings` option — layout, columns, max_visible, placement, title_format
 
 ### Stock display helper (v2.31.8+)
 `get_stock_display(WC_Product $p): [status, label]` — uses `$p->get_availability()` which runs `woocommerce_get_availability_text` + `woocommerce_get_availability` filters. Third-party plugins that override WC's default "Beställningsvara" to e.g. "Leveranstid 1-3 dagar" now flow through to accessory rows. Fallback keeps Swedish defaults if filter returns empty. Use `get_variation_stock_label($v)` for variant dropdown options.
+
+### Installation-per-accessory (v2.33.0+) — "Montering av tillbehör"
+Feature: admin configures, per (main product × accessory), whether installation is offered and at what tier. Customer sees radio with "Ingen montering" vs "Jag vill ha hjälp med montering av X – Y kr"; picking "yes" appends the ARB product as a separate cart line with the calculated price.
+
+- **Meta on MAIN product:** `_sijab_accessory_installations = [['accessory_id'=>X, 'tier'=>'liten|stor|custom', 'custom_price'=>0.0]]`
+- **ARB product:** a regular WC product with SKU `ARB` must exist; its price is the 100 %-base. Liten = 50 % of ARB, Stor = 100 %, Eget = fixed amount.
+- **Admin UI:** "Montering av tillbehör" section in product-data Tillbehör tab (dropdown per accessory + custom price field when tier=custom)
+- **Frontend:** `emit_installations_meta($main)` outputs `window.sijabInstallations[mainId][accId] = { tier, price, price_formatted, accessory_name }`
+- **JS injection:** `injectInstallRadios()` (in frontend.js) scans accessory cards and appends `.sijab-install-options` with two radios. In checklist/cards mode the radios are collapsed until the accessory checkbox is checked; unchecking resets to "Ingen montering".
+- **Batch payload:** both `buildBundleItems()` (cards/checklist flow) and `sendHorizontalBundleAdd()` (popup-companion flow) append `{ install: { main_id, for_accessory_id } }` when `sijabGetInstallItem()` reports "yes".
+- **Server (`ajax_bundle_add_to_cart`):** detects the `install` envelope, validates against saved meta, recomputes the price server-side (never trusts client), adds ARB with cart item data `_sijab_install_price`, `_sijab_install_for_acc_id/name`, `_sijab_install_tier`, `_sijab_install_unique` (prevents WC merging separate install lines), `_sijab_bundled_by = main_id`.
+- **Cart/checkout display:** `woocommerce_before_calculate_totals` sets the price; `woocommerce_cart_item_name` replaces "Montering" with "Montering av Tanklock"; `woocommerce_get_item_data` shows "Monterar: Tanklock" row.
+- **Order:** `save_accessory_meta_to_order` copies meta and adds visible "Monterar" meta; internal underscore-prefixed meta hidden via `woocommerce_hidden_order_itemmeta`.
+- **Scope gap (intentional):** for horizontal/grid/compact layout WITHOUT popup-companions, the standard WC "LÄGG TILL" button is not patched — install radio renders on the card but won't be included in that single-item add flow. Works as soon as any popup-companion rule is configured on the accessory, OR when using cards/checklist layout.
 
 ### Popup-companions (v2.32.x)
 Feature: admin configures `(accessory → required product)` rules per main product. When customer checks/clicks the accessory, a modal appears asking them to also add the required product.
@@ -101,7 +117,7 @@ Feature: admin configures `(accessory → required product)` rules per main prod
 - Stock-protect: `woocommerce_order_item_quantity` returns 0 for items with `_sijab_bundled_by` meta
 
 ### Hidden internal meta (v2.31.11+)
-`_sijab_acc_parent`, `_sijab_bundled_by`, `_sijab_bundle_components_added` are hidden from admin order UI + customer emails via `woocommerce_hidden_order_itemmeta` filter.
+`_sijab_acc_parent`, `_sijab_bundled_by`, `_sijab_bundle_components_added`, and (v2.33.0+) `_sijab_install_price`, `_sijab_install_for_acc_id`, `_sijab_install_for_acc_name`, `_sijab_install_tier`, `_sijab_install_unique` are hidden from admin order UI + customer emails via `woocommerce_hidden_order_itemmeta` filter.
 
 ### Admin panel (`SIJAB_Tillbehor::render_admin_page`)
 Single unified page at `admin.php?page=sijab-tillbehor` with JS tabs (no reloads):
@@ -117,6 +133,7 @@ In product edit page, under WooCommerce product data panel:
 - SKU textarea (comma-separated)
 - Drag & drop sortable list of added accessories
 - **NEW v2.32.0:** "Tillbehörs-kombinationer som kräver mer" section for popup-companions
+- **NEW v2.33.0:** "Montering av tillbehör" section — dropdown per accessory (Liten 50 % / Stor 100 % / Eget pris) for installation offers
 - Category link
 - AI-suggest button (if OpenAI key configured)
 
@@ -163,7 +180,7 @@ Outline pill button matching the filled LÄGG TILL style — pill shape, primary
 - LiteSpeed Cache on server — sometimes needs manual purge after plugin update
 - WC panel CSS force-floats all `<label>` elements (`float:left; width:150px`). Use `<p class="form-field sijab-ff"><label></label><span class="sijab-field-wrap">...</span></p>` pattern or labels escape your custom containers.
 
-## Recent version history (session ending 2026-04-20)
+## Recent version history
 - **2.31.6** — Cards layout: hide default WC button + qty
 - **2.31.7** — Cards: dynamic CTA label, hide summary when 0 accessories
 - **2.31.8** — Filter-aware stock text via `get_availability()`
@@ -178,17 +195,22 @@ Outline pill button matching the filled LÄGG TILL style — pill shape, primary
 - **2.32.4** — Popup transparency: show all items with role badges (Huvudprodukt / Ditt val / Krävs för att passa)
 - **2.32.5** — Fix: variable main products silently dropped from popup batch-add (missing variation_id). Now pass variation_id + attributes from form.cart state, or skip main if no variation chosen.
 - **2.32.6** — Popup row shows variation details when variable main (name appended, exact variant price incl. rea, variant stock, variant image). Data from `form.variations_form[data-product_variations]`.
+- **2.33.0** (2026-04-21) — **Installation per accessory** ("Montering av tillbehör"). Admin configures Liten (50 % av ARB) / Stor (100 %) / Eget pris per (main, accessory). Kund ser radio "Ingen montering" / "Jag vill ha hjälp med montering av X – Y kr". ARB-produkten (SKU `ARB`) läggs som separat kundvagnsrad med beräknat pris + meta som länkar tillbaka till tillbehöret. Scope-lucka: horisontell/grid/kompakt UTAN popup-companions använder WC:s standard-LÄGG-TILL-knapp, där install-radion syns men inte inkluderas i single-item-add (fungerar via cards/checklist eller så snart en popup-regel konfigureras). Se "Installation-per-accessory" sektion ovan.
+- **2.33.1** — Only emit `sijab-layout-cards` body class when product has accessories (avoids cards-layout CSS leaking into product pages without accessories).
+- **2.33.2** — Also require *visible* accessories before adding layout body class (follow-up tightening of the v2.33.1 check).
 
 ## Pending / Future
-- Reservdelar (spare parts) list — designed but not built (would be v2.33.0)
-- Cards-layout CTA counter doesn't include pending companions (shows "2 produkter" when actually 3 going in)
+- Reservdelar (spare parts) list — designed but not built (candidate för v2.34.0 eller senare)
+- Cards-layout CTA counter doesn't include pending companions/installations (shows "2 produkter" när det faktiskt blir 3 going in)
 - Variable products in bundles — not yet implemented
+- Install radio-inkludering för horisontell/grid/kompakt utan popup-companions — v2.33.3+ kandidat
 - Local Cursor-projekt git structure still confused (use /tmp/acc-push/accessory-tab/ as canonical)
-- test.sijab.com fortfarande v2.32.4 — prod (sijab.com) är v2.32.6
+- test.sijab.com fortfarande v2.32.4 — prod (sijab.com) uppdateras till v2.33.2 efter verifiering
 
 ## Continuation guide (for resumption from a fresh session)
-1. Read this file + user's memory at `C:\Users\<user>\.claude\projects\G--Min-enhet-N8N-Cursor-projekt\memory\accessory-tab-plugin.md`
-2. Canonical working tree is `/tmp/acc-push/accessory-tab/` — edit, commit, push from there only
-3. Token `ghp_…` lives in `MEMORY.md` — never commit to source (GitHub push-protection blocks)
-4. Current focus: popup-companions feature is complete across all 5 layouts incl. variable main products
-5. Next likely feature: reservdelar list (v2.33.0) or resolve pending TODO items above
+1. Read this file + user's memory at `C:\Users\<user>\.claude\projects\G--Min-enhet-Claude-projekt\memory\accessory-tab-plugin.md`
+2. Canonical working tree is `/tmp/acc-push/accessory-tab/` — edit, commit, push from there only. If missing, `git clone https://github.com/stainzor/accessory-tab.git /tmp/acc-push/accessory-tab`.
+3. GitHub auth: `gh` CLI is available on the Windows dev machine (logged in as `stainzor`), scopes `repo`, `gist`, `read:org`. Use it for push/release. No separate token needed in MEMORY.md anymore.
+4. Current focus: popup-companions (v2.32.x) and installation-per-accessory (v2.33.0) are both shipped and live on prod.
+5. Next likely feature: Reservdelar-lista (v2.34.0 candidate) or install-support på horisontell/grid/kompakt utan popup-companions (v2.33.1).
+6. **Prerequisite för v2.33.0 att fungera:** en WC-produkt med SKU `ARB` (namn "Montering") måste finnas på sajten med ett basbelopp. Liten tier = 50 % av det, Stor = 100 %, Eget = admin-specifikt belopp.
