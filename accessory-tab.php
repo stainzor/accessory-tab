@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.33.4
+ * Version: 2.33.5
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -35,7 +35,7 @@ class SIJAB_Tillbehor {
 	const REQ_META      = '_sijab_accessory_requirements';  // [ ['accessory_id'=>X, 'requires'=>[['product_id'=>Y,'qty'=>1],...]], ... ]
 	const INST_META     = '_sijab_accessory_installations'; // [ ['accessory_id'=>X, 'tier'=>'liten|stor|custom', 'custom_price'=>0.0], ... ]
 	const INST_SKU      = 'ARB';                             // SKU of the "Montering" product used for installation line items.
-	const VERSION       = '2.33.4';
+	const VERSION       = '2.33.5';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -86,6 +86,9 @@ class SIJAB_Tillbehor {
 		add_action( 'admin_menu', [ $this, 'register_settings_menu' ] );
 		add_action( 'admin_init', [ $this, 'register_settings' ] );
 		add_action( 'admin_init', [ $this, 'handle_migration' ] );
+
+		// SKU-textarea parse report (v2.33.5+): show admin notice after save.
+		add_action( 'admin_notices', [ $this, 'render_sku_report_notice' ] );
 
 		// AJAX: variable product add-to-cart from accessory card.
 		add_action( 'wp_ajax_sijab_add_to_cart', [ $this, 'ajax_add_to_cart' ] );
@@ -1937,14 +1940,44 @@ class SIJAB_Tillbehor {
 			}
 		}
 
-		// Also accept SKUs from the textarea.
+		// Existing-ids set BEFORE we process SKUs from the textarea — needed so
+		// we can categorize each pasted SKU as added/duplicate (v2.33.5+).
+		$existing_ids = array_values( array_unique( array_filter( array_map( 'absint', $ids ) ) ) );
+
+		// Also accept SKUs from the textarea. Categorize each one so the admin
+		// gets a clear notice afterwards instead of silent dedup/strip/miss.
+		$report = [ 'added' => [], 'duplicate' => [], 'self' => [], 'not_found' => [] ];
 		if ( ! empty( $_POST['sijab_accessories_skus'] ) ) {
 			$sku_str = sanitize_text_field( wp_unslash( $_POST['sijab_accessories_skus'] ) );
 			$sku_arr = array_filter( array_map( 'trim', explode( ',', $sku_str ) ) );
 			foreach ( $sku_arr as $sku ) {
-				$pid_sku = wc_get_product_id_by_sku( $sku );
-				if ( $pid_sku ) $ids[] = absint( $pid_sku );
+				$pid_sku = (int) wc_get_product_id_by_sku( $sku );
+				if ( ! $pid_sku ) {
+					$report['not_found'][] = $sku;
+					continue;
+				}
+				if ( $pid_sku === (int) $pid ) {
+					$report['self'][] = $sku;
+					continue;
+				}
+				if ( in_array( $pid_sku, $existing_ids, true ) ) {
+					$report['duplicate'][] = $sku;
+					continue;
+				}
+				$ids[] = $pid_sku;
+				$report['added'][] = $sku;
+				$existing_ids[] = $pid_sku;  // so a SKU that resolves to the same id later in the list is reported as duplicate
 			}
+		}
+
+		// Stash report in a per-user transient — render via admin_notices on
+		// the next admin page load (post.php redirects after save).
+		if ( $report['added'] || $report['duplicate'] || $report['self'] || $report['not_found'] ) {
+			set_transient(
+				'sijab_sku_report_' . get_current_user_id() . '_' . $pid,
+				$report,
+				60
+			);
 		}
 
 		$ids = array_values( array_unique( array_diff( array_filter( array_map( 'absint', $ids ) ), [ $pid ] ) ) );
@@ -1977,6 +2010,59 @@ class SIJAB_Tillbehor {
 		// assigns a tier (Liten/Stor/Eget pris) per accessory; customer sees
 		// a radio on the frontend to opt into installation.
 		$this->save_accessory_installations( $product );
+	}
+
+	/**
+	 * Render a one-time admin notice summarising the result of the last
+	 * SKU-textarea parse on a product-edit page. Reads the per-user transient
+	 * stashed by save_product_accessories() and deletes it after rendering.
+	 * (v2.33.5+)
+	 */
+	public function render_sku_report_notice(): void {
+		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+		if ( ! $screen || $screen->base !== 'post' || $screen->post_type !== 'product' ) return;
+
+		global $post;
+		if ( ! $post || ! ( $post->ID ?? 0 ) ) return;
+
+		$key    = 'sijab_sku_report_' . get_current_user_id() . '_' . (int) $post->ID;
+		$report = get_transient( $key );
+		if ( ! $report || ! is_array( $report ) ) return;
+		delete_transient( $key );
+
+		$added     = (array) ( $report['added'] ?? [] );
+		$duplicate = (array) ( $report['duplicate'] ?? [] );
+		$self      = (array) ( $report['self'] ?? [] );
+		$not_found = (array) ( $report['not_found'] ?? [] );
+
+		// Choose notice class — error if anything failed, success otherwise.
+		$has_problems = $duplicate || $self || $not_found;
+		$class        = $has_problems ? 'notice notice-warning' : 'notice notice-success';
+
+		echo '<div class="' . esc_attr( $class ) . ' is-dismissible">';
+		echo '<p><strong>' . esc_html__( 'Tillbehör via SKU:', 'sijab-tillbehor' ) . '</strong></p>';
+		echo '<ul style="margin-left:18px; list-style:disc;">';
+		if ( $added ) {
+			/* translators: %d: number of SKUs added */
+			echo '<li>' . sprintf( esc_html( _n( '%d SKU tillagd som tillbehör.', '%d SKUs tillagda som tillbehör.', count( $added ), 'sijab-tillbehor' ) ), count( $added ) );
+			echo ' <code>' . esc_html( implode( ', ', $added ) ) . '</code></li>';
+		}
+		if ( $duplicate ) {
+			/* translators: %d: number of duplicate SKUs */
+			echo '<li>' . sprintf( esc_html( _n( '%d SKU låg redan i tillbehörslistan (hoppade över).', '%d SKUs låg redan i tillbehörslistan (hoppade över).', count( $duplicate ), 'sijab-tillbehor' ) ), count( $duplicate ) );
+			echo ' <code>' . esc_html( implode( ', ', $duplicate ) ) . '</code></li>';
+		}
+		if ( $self ) {
+			/* translators: %d: number of self-reference SKUs */
+			echo '<li>' . sprintf( esc_html( _n( '%d SKU var produktens egen artikel (en produkt kan inte vara sitt eget tillbehör).', '%d SKUs var produktens egen artikel (en produkt kan inte vara sitt eget tillbehör).', count( $self ), 'sijab-tillbehor' ) ), count( $self ) );
+			echo ' <code>' . esc_html( implode( ', ', $self ) ) . '</code></li>';
+		}
+		if ( $not_found ) {
+			/* translators: %d: number of unresolved SKUs */
+			echo '<li>' . sprintf( esc_html( _n( '%d SKU hittades inte i butiken (kontrollera stavning).', '%d SKUs hittades inte i butiken (kontrollera stavning).', count( $not_found ), 'sijab-tillbehor' ) ), count( $not_found ) );
+			echo ' <code>' . esc_html( implode( ', ', $not_found ) ) . '</code></li>';
+		}
+		echo '</ul></div>';
 	}
 
 	/**
