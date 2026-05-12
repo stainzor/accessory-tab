@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.33.5
+ * Version: 2.33.6
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -35,7 +35,9 @@ class SIJAB_Tillbehor {
 	const REQ_META      = '_sijab_accessory_requirements';  // [ ['accessory_id'=>X, 'requires'=>[['product_id'=>Y,'qty'=>1],...]], ... ]
 	const INST_META     = '_sijab_accessory_installations'; // [ ['accessory_id'=>X, 'tier'=>'liten|stor|custom', 'custom_price'=>0.0], ... ]
 	const INST_SKU      = 'ARB';                             // SKU of the "Montering" product used for installation line items.
-	const VERSION       = '2.33.5';
+	const BACKUP_META   = '_sijab_accessories_backup';       // [['ts'=>1234567890, 'ids'=>[1,2,3]], ...]  (v2.33.6+, keeps 3 latest)
+	const BACKUP_KEEP   = 3;                                 // how many historical snapshots to retain per product
+	const VERSION       = '2.33.6';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -86,6 +88,7 @@ class SIJAB_Tillbehor {
 		add_action( 'admin_menu', [ $this, 'register_settings_menu' ] );
 		add_action( 'admin_init', [ $this, 'register_settings' ] );
 		add_action( 'admin_init', [ $this, 'handle_migration' ] );
+		add_action( 'admin_init', [ $this, 'handle_restore_accessories' ] );
 
 		// SKU-textarea parse report (v2.33.5+): show admin notice after save.
 		add_action( 'admin_notices', [ $this, 'render_sku_report_notice' ] );
@@ -462,6 +465,7 @@ class SIJAB_Tillbehor {
 			<div id="sijab-tab-verktyg" class="sijab-tab-panel" style="display:none;">
 				<?php $this->render_migration_section(); ?>
 				<?php $this->render_bulk_accessories_section(); ?>
+				<?php $this->render_restore_section(); ?>
 			</div><!-- end Verktyg panel -->
 
 			<!-- ── Flik: Om ─────────────────────────── -->
@@ -615,6 +619,144 @@ class SIJAB_Tillbehor {
 
 		set_transient( 'sijab_migration_result', compact( 'total', 'updated', 'skipped', 'details' ), 60 );
 		wp_redirect( add_query_arg( [ 'page' => 'sijab-tillbehor', 'migrated' => '1' ], admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	// ──────────────────────────────────────────────────────────────
+	// Verktyg — Återställ tillbehörslistor (v2.33.6+)
+	//
+	// Lists products that have at least one backup snapshot stored in
+	// _sijab_accessories_backup. Admin can restore any snapshot with
+	// a single click. Backups are pushed automatically by
+	// save_product_accessories() before any change.
+	// ──────────────────────────────────────────────────────────────
+
+	public function render_restore_section(): void {
+		global $wpdb;
+		// Show recent flag from URL.
+		$restored_flag = isset( $_GET['sijab_restored'] ) ? (int) $_GET['sijab_restored'] : 0;
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT post_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = %s ORDER BY post_id DESC LIMIT 200",
+			self::BACKUP_META
+		) );
+		?>
+		<div style="margin-top:24px; background:#fff; border:1px solid #c3c4c7; border-radius:8px; padding:24px; max-width:900px;">
+			<h3 style="margin-top:0;"><?php esc_html_e( 'Återställ tillbehörslistor', 'sijab-tillbehor' ); ?></h3>
+			<p class="description"><?php esc_html_e( 'Varje gång en produkts tillbehör ändras sparas en automatisk backup (3 senaste). Här kan du återställa om något försvann oavsiktligt.', 'sijab-tillbehor' ); ?></p>
+
+			<?php if ( $restored_flag ) : ?>
+				<div class="notice notice-success inline" style="margin:12px 0; padding:8px 12px;"><p><?php
+					/* translators: %d: number of accessories restored */
+					printf( esc_html__( 'Tillbehörslistan återställd (%d artiklar).', 'sijab-tillbehor' ), absint( $_GET['sijab_restored_count'] ?? 0 ) );
+				?></p></div>
+			<?php endif; ?>
+
+			<?php if ( empty( $rows ) ) : ?>
+				<p style="color:#666; font-style:italic; margin:16px 0 0;"><?php esc_html_e( 'Inga backuper sparade ännu. Backuper skapas automatiskt nästa gång du redigerar en produkts tillbehör.', 'sijab-tillbehor' ); ?></p>
+			<?php else : ?>
+				<table class="widefat striped" style="margin-top:12px;">
+					<thead>
+						<tr>
+							<th><?php esc_html_e( 'Produkt', 'sijab-tillbehor' ); ?></th>
+							<th><?php esc_html_e( 'Nuvarande', 'sijab-tillbehor' ); ?></th>
+							<th><?php esc_html_e( 'Backuper (senaste först)', 'sijab-tillbehor' ); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+					<?php foreach ( $rows as $row ) :
+						$post_id = (int) $row->post_id;
+						$p       = wc_get_product( $post_id );
+						if ( ! $p ) continue;
+						$current = (array) get_post_meta( $post_id, self::META_KEY, true );
+						$current = array_values( array_filter( array_map( 'absint', $current ) ) );
+						$backups = maybe_unserialize( $row->meta_value );
+						if ( ! is_array( $backups ) ) continue;
+						?>
+						<tr>
+							<td>
+								<a href="<?php echo esc_url( get_edit_post_link( $post_id ) ); ?>" target="_blank">
+									<strong><?php echo esc_html( $p->get_formatted_name() ); ?></strong>
+								</a>
+							</td>
+							<td><?php
+								/* translators: %d: number of accessories currently saved */
+								printf( esc_html( _n( '%d tillbehör', '%d tillbehör', count( $current ), 'sijab-tillbehor' ) ), count( $current ) );
+							?></td>
+							<td>
+								<?php foreach ( $backups as $idx => $b ) :
+									if ( ! is_array( $b ) || empty( $b['ids'] ) ) continue;
+									$ts    = (int) ( $b['ts'] ?? 0 );
+									$count = count( (array) $b['ids'] );
+									$diff  = $ts ? human_time_diff( $ts, current_time( 'timestamp' ) ) : '?';
+									$restore_url = wp_nonce_url(
+										add_query_arg( [
+											'page'              => 'sijab-tillbehor',
+											'sijab_restore'     => '1',
+											'sijab_restore_pid' => $post_id,
+											'sijab_restore_idx' => $idx,
+										], admin_url( 'admin.php' ) ),
+										'sijab_restore_accessories'
+									);
+									?>
+									<div style="margin-bottom:6px;">
+										<?php
+										/* translators: 1: time-ago, 2: count */
+										printf(
+											esc_html__( 'För %1$s sedan — %2$d artiklar', 'sijab-tillbehor' ),
+											esc_html( $diff ),
+											$count
+										);
+										?>
+										&nbsp;<a href="<?php echo esc_url( $restore_url ); ?>" class="button button-small" onclick="return confirm('<?php echo esc_js( __( 'Återställ denna backup som aktiv tillbehörslista?', 'sijab-tillbehor' ) ); ?>');"><?php esc_html_e( 'Återställ', 'sijab-tillbehor' ); ?></a>
+									</div>
+								<?php endforeach; ?>
+							</td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+				</table>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Handle GET /wp-admin/admin.php?page=sijab-tillbehor&sijab_restore=1
+	 * Restores the backup at index N back into _sijab_accessories_ids and
+	 * pushes the (about-to-be-overwritten) current list onto the backup stack
+	 * so the admin can also un-restore.
+	 */
+	public function handle_restore_accessories(): void {
+		if ( empty( $_GET['sijab_restore'] ) ) return;
+		if ( ! current_user_can( 'manage_woocommerce' ) ) return;
+		check_admin_referer( 'sijab_restore_accessories' );
+
+		$pid = absint( $_GET['sijab_restore_pid'] ?? 0 );
+		$idx = absint( $_GET['sijab_restore_idx'] ?? 0 );
+		if ( ! $pid ) return;
+
+		$backups = $this->get_accessory_backups( $pid );
+		if ( ! isset( $backups[ $idx ]['ids'] ) ) return;
+
+		$restore_ids = array_values( array_filter( array_map( 'absint', (array) $backups[ $idx ]['ids'] ) ) );
+		if ( empty( $restore_ids ) ) return;
+
+		// Snapshot current state before overwrite so admin can flip back.
+		$current = (array) get_post_meta( $pid, self::META_KEY, true );
+		$current = array_values( array_filter( array_map( 'absint', $current ) ) );
+		if ( $current && $current !== $restore_ids ) {
+			$this->push_accessory_backup( $pid, $current );
+		}
+
+		update_post_meta( $pid, self::META_KEY, $restore_ids );
+		update_post_meta( $pid, '_crosssell_ids', $restore_ids );
+
+		wp_safe_redirect( add_query_arg( [
+			'page'                  => 'sijab-tillbehor',
+			'tab'                   => 'verktyg',
+			'sijab_restored'        => '1',
+			'sijab_restored_count'  => count( $restore_ids ),
+		], admin_url( 'admin.php' ) ) . '#sijab-tab-verktyg' );
 		exit;
 	}
 
@@ -1982,6 +2124,34 @@ class SIJAB_Tillbehor {
 
 		$ids = array_values( array_unique( array_diff( array_filter( array_map( 'absint', $ids ) ), [ $pid ] ) ) );
 
+		// ──────────────────────────────────────────────────────────
+		// Safety net (v2.33.6+): backup + sanity-check before saving.
+		// ──────────────────────────────────────────────────────────
+		$old_ids = (array) get_post_meta( $pid, self::META_KEY, true );
+		$old_ids = array_values( array_filter( array_map( 'absint', $old_ids ) ) );
+
+		// Sanity check: refuse to wipe 3+ accessories down to zero, since the
+		// most likely cause is a JS/form glitch losing the hidden JSON field
+		// rather than an explicit "remove all" action by the admin. Keep the
+		// existing list AND alert the admin via the sku-report notice.
+		// Smaller deletions (1-2 items) are allowed since admin commonly trims
+		// manually via the row 'Ta bort' link.
+		$wiped_silently = empty( $ids ) && count( $old_ids ) >= 3;
+		if ( $wiped_silently ) {
+			$ids = $old_ids;  // restore — refuse the wipe
+			set_transient(
+				'sijab_acc_wipe_blocked_' . get_current_user_id() . '_' . $pid,
+				[ 'restored_count' => count( $old_ids ) ],
+				60
+			);
+		} else {
+			// Snapshot the previous list BEFORE we overwrite, so admin can
+			// undo unintended changes via Verktyg → Återställ tillbehör.
+			if ( ! empty( $old_ids ) && $old_ids !== $ids ) {
+				$this->push_accessory_backup( $pid, $old_ids );
+			}
+		}
+
 		// Use WC_Product meta API so changes survive WC's own save().
 		if ( empty( $ids ) ) {
 			$product->delete_meta_data( self::META_KEY );
@@ -2013,10 +2183,54 @@ class SIJAB_Tillbehor {
 	}
 
 	/**
+	 * Push the previous accessory-ID list onto a small ring-buffer of
+	 * snapshots stored in post_meta self::BACKUP_META. Keeps the
+	 * self::BACKUP_KEEP most recent snapshots (default 3) so admin can
+	 * roll back unintended changes via Verktyg → Återställ tillbehör.
+	 * (v2.33.6+)
+	 */
+	private function push_accessory_backup( int $product_id, array $previous_ids ): void {
+		if ( $product_id <= 0 ) return;
+		$previous_ids = array_values( array_unique( array_filter( array_map( 'absint', $previous_ids ) ) ) );
+		if ( empty( $previous_ids ) ) return;
+
+		$backups = (array) get_post_meta( $product_id, self::BACKUP_META, true );
+		if ( ! is_array( $backups ) ) $backups = [];
+
+		// Skip if newest backup is identical (avoid no-op save spam).
+		if ( ! empty( $backups[0]['ids'] ) && (array) $backups[0]['ids'] === $previous_ids ) {
+			return;
+		}
+
+		array_unshift( $backups, [
+			'ts'   => time(),
+			'ids'  => $previous_ids,
+			'user' => get_current_user_id(),
+		] );
+		$backups = array_slice( $backups, 0, self::BACKUP_KEEP );
+
+		update_post_meta( $product_id, self::BACKUP_META, $backups );
+	}
+
+	/**
+	 * Read the snapshots stored for a given product.
+	 * Returns an array of [ ['ts'=>int, 'ids'=>int[], 'user'=>int], ... ]
+	 * with the newest first. Empty array if none.
+	 */
+	public function get_accessory_backups( int $product_id ): array {
+		$backups = get_post_meta( $product_id, self::BACKUP_META, true );
+		if ( ! is_array( $backups ) ) return [];
+		return $backups;
+	}
+
+	/**
 	 * Render a one-time admin notice summarising the result of the last
 	 * SKU-textarea parse on a product-edit page. Reads the per-user transient
 	 * stashed by save_product_accessories() and deletes it after rendering.
 	 * (v2.33.5+)
+	 *
+	 * Also renders a wipe-blocked notice (v2.33.6+) when the sanity-check
+	 * refused to delete 3+ accessories in one save.
 	 */
 	public function render_sku_report_notice(): void {
 		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
@@ -2024,6 +2238,26 @@ class SIJAB_Tillbehor {
 
 		global $post;
 		if ( ! $post || ! ( $post->ID ?? 0 ) ) return;
+
+		// Wipe-blocked notice (v2.33.6+) — sanity-check refused to delete
+		// 3+ accessories on a single save. Show in addition to (or instead of)
+		// the SKU-parse report.
+		$wipe_key  = 'sijab_acc_wipe_blocked_' . get_current_user_id() . '_' . (int) $post->ID;
+		$wipe_info = get_transient( $wipe_key );
+		if ( is_array( $wipe_info ) ) {
+			delete_transient( $wipe_key );
+			$restored = (int) ( $wipe_info['restored_count'] ?? 0 );
+			echo '<div class="notice notice-warning is-dismissible">';
+			echo '<p><strong>' . esc_html__( 'Säkerhetsskydd: tillbehörslistan inte tömd.', 'sijab-tillbehor' ) . '</strong></p>';
+			echo '<p>';
+			/* translators: %d: number of accessories */
+			printf(
+				esc_html__( 'Senaste sparningen försökte ta bort alla %d tillbehör samtidigt. Eftersom det troligen är en JavaScript- eller formulärbugg snarare än ett avsiktligt val, behölls listan oförändrad. Vill du verkligen tömma listan, klicka "Ta bort" på varje tillbehör manuellt först.', 'sijab-tillbehor' ),
+				$restored
+			);
+			echo '</p>';
+			echo '</div>';
+		}
 
 		$key    = 'sijab_sku_report_' . get_current_user_id() . '_' . (int) $post->ID;
 		$report = get_transient( $key );
