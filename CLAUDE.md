@@ -3,7 +3,7 @@
 ## Overview
 WooCommerce plugin that displays product accessories on the single product page. Supports five layouts, popup-driven required-companion rules, and tight integration with Svea Checkout + Visma.net via Sharespine.
 
-- **Current version:** 2.33.6
+- **Current version:** 2.33.7
 - **GitHub repo:** `stainzor/accessory-tab` (private)
 - **Test server:** test.sijab.com
 - **Production:** sijab.com

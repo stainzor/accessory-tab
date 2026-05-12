@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.33.6
+ * Version: 2.33.7
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -37,7 +37,7 @@ class SIJAB_Tillbehor {
 	const INST_SKU      = 'ARB';                             // SKU of the "Montering" product used for installation line items.
 	const BACKUP_META   = '_sijab_accessories_backup';       // [['ts'=>1234567890, 'ids'=>[1,2,3]], ...]  (v2.33.6+, keeps 3 latest)
 	const BACKUP_KEEP   = 3;                                 // how many historical snapshots to retain per product
-	const VERSION       = '2.33.6';
+	const VERSION       = '2.33.7';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -2125,31 +2125,22 @@ class SIJAB_Tillbehor {
 		$ids = array_values( array_unique( array_diff( array_filter( array_map( 'absint', $ids ) ), [ $pid ] ) ) );
 
 		// ──────────────────────────────────────────────────────────
-		// Safety net (v2.33.6+): backup + sanity-check before saving.
+		// Safety net (v2.33.6 introduced this, v2.33.7 simplified it).
+		//
+		// v2.33.6 had a sanity-check that refused to wipe 3+ accessories
+		// to zero — but that fired on the LEGITIMATE flow of clicking
+		// "Ta bort" on each row and then Update (JS empties the json
+		// field, server sees empty list, thinks "JS bug", refuses).
+		// The backup ring-buffer below + the restore UI in Verktyg are
+		// enough recovery — paternalistic blocking removed.
 		// ──────────────────────────────────────────────────────────
 		$old_ids = (array) get_post_meta( $pid, self::META_KEY, true );
 		$old_ids = array_values( array_filter( array_map( 'absint', $old_ids ) ) );
 
-		// Sanity check: refuse to wipe 3+ accessories down to zero, since the
-		// most likely cause is a JS/form glitch losing the hidden JSON field
-		// rather than an explicit "remove all" action by the admin. Keep the
-		// existing list AND alert the admin via the sku-report notice.
-		// Smaller deletions (1-2 items) are allowed since admin commonly trims
-		// manually via the row 'Ta bort' link.
-		$wiped_silently = empty( $ids ) && count( $old_ids ) >= 3;
-		if ( $wiped_silently ) {
-			$ids = $old_ids;  // restore — refuse the wipe
-			set_transient(
-				'sijab_acc_wipe_blocked_' . get_current_user_id() . '_' . $pid,
-				[ 'restored_count' => count( $old_ids ) ],
-				60
-			);
-		} else {
-			// Snapshot the previous list BEFORE we overwrite, so admin can
-			// undo unintended changes via Verktyg → Återställ tillbehör.
-			if ( ! empty( $old_ids ) && $old_ids !== $ids ) {
-				$this->push_accessory_backup( $pid, $old_ids );
-			}
+		// Snapshot the previous list BEFORE we overwrite, so admin can
+		// undo unintended changes via Verktyg → Återställ tillbehör.
+		if ( ! empty( $old_ids ) && $old_ids !== $ids ) {
+			$this->push_accessory_backup( $pid, $old_ids );
 		}
 
 		// Use WC_Product meta API so changes survive WC's own save().
@@ -2239,25 +2230,12 @@ class SIJAB_Tillbehor {
 		global $post;
 		if ( ! $post || ! ( $post->ID ?? 0 ) ) return;
 
-		// Wipe-blocked notice (v2.33.6+) — sanity-check refused to delete
-		// 3+ accessories on a single save. Show in addition to (or instead of)
-		// the SKU-parse report.
-		$wipe_key  = 'sijab_acc_wipe_blocked_' . get_current_user_id() . '_' . (int) $post->ID;
-		$wipe_info = get_transient( $wipe_key );
-		if ( is_array( $wipe_info ) ) {
-			delete_transient( $wipe_key );
-			$restored = (int) ( $wipe_info['restored_count'] ?? 0 );
-			echo '<div class="notice notice-warning is-dismissible">';
-			echo '<p><strong>' . esc_html__( 'Säkerhetsskydd: tillbehörslistan inte tömd.', 'sijab-tillbehor' ) . '</strong></p>';
-			echo '<p>';
-			/* translators: %d: number of accessories */
-			printf(
-				esc_html__( 'Senaste sparningen försökte ta bort alla %d tillbehör samtidigt. Eftersom det troligen är en JavaScript- eller formulärbugg snarare än ett avsiktligt val, behölls listan oförändrad. Vill du verkligen tömma listan, klicka "Ta bort" på varje tillbehör manuellt först.', 'sijab-tillbehor' ),
-				$restored
-			);
-			echo '</p>';
-			echo '</div>';
-		}
+		// v2.33.6 introduced a wipe-blocked notice for the sanity-check;
+		// v2.33.7 removed the sanity-check (it broke the legitimate
+		// 'click Ta bort on each row + Update' flow). Notice rendering
+		// for any leftover transients from v2.33.6 is intentionally
+		// dropped — Lager 1 (backup) + Lager 3 (restore UI) handle
+		// recovery instead.
 
 		$key    = 'sijab_sku_report_' . get_current_user_id() . '_' . (int) $post->ID;
 		$report = get_transient( $key );
