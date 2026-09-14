@@ -3,8 +3,8 @@
 ## Overview
 WooCommerce plugin that displays product accessories on the single product page. Supports five layouts, popup-driven required-companion rules, and tight integration with Svea Checkout + Visma.net via Sharespine.
 
-- **Current version:** 2.33.7
-- **GitHub repo:** `stainzor/accessory-tab` (private)
+- **Current version:** 2.34.0
+- **GitHub repo:** `stainzor/accessory-tab` — **NOTE (2026-09-14): the repo is currently PUBLIC** (`private: false` via the GitHub API). No secrets live in the code, but this file exposes test/prod URLs and internal workflow. Decide whether to flip it back to private; if it stays public, the GitHub-token field in Verktyg is unnecessary for updates.
 - **Test server:** test.sijab.com
 - **Production:** sijab.com
 - **Test product (cards):** https://test.sijab.com/shop/adblue/adblue-1000-liter-ibc/
@@ -95,7 +95,8 @@ Feature: admin configures, per (main product × accessory), whether installation
 - **Server (`ajax_bundle_add_to_cart`):** detects the `install` envelope, validates against saved meta, recomputes the price server-side (never trusts client), adds ARB with cart item data `_sijab_install_price`, `_sijab_install_for_acc_id/name`, `_sijab_install_tier`, `_sijab_install_unique` (prevents WC merging separate install lines), `_sijab_bundled_by = main_id`.
 - **Cart/checkout display:** `woocommerce_before_calculate_totals` sets the price; `woocommerce_cart_item_name` replaces "Montering" with "Montering av Tanklock"; `woocommerce_get_item_data` shows "Monterar: Tanklock" row.
 - **Order:** `save_accessory_meta_to_order` copies meta and adds visible "Monterar" meta; internal underscore-prefixed meta hidden via `woocommerce_hidden_order_itemmeta`.
-- **Scope gap (intentional):** for horizontal/grid/compact layout WITHOUT popup-companions, the standard WC "LÄGG TILL" button is not patched — install radio renders on the card but won't be included in that single-item add flow. Works as soon as any popup-companion rule is configured on the accessory, OR when using cards/checklist layout.
+- **v2.34.0:** the former scope gap is closed — on horizontal/grid/compact the LÄGG TILL click is intercepted (capture phase, `.sijab-acc-atc-btn[data-main-product]`) whenever the install radio says "yes" OR companion rules exist, and routed through `sijab_bundle_add_to_cart` with the card's qty + chosen variation. Variable accessories (`.sijab-var-atc-btn`) now carry the same data attributes. Server side refuses an install envelope unless the accessory is actually in the cart (no orphan "Montering av X" lines).
+- **Card selector:** frontend.js uses `CARD_SEL = '.sijab-acc-card, .kr-card'` everywhere. Bundle Cards markup never had `.sijab-acc-card`, which silently disabled install radios and click tracking in that layout before v2.34.0.
 
 ### Popup-companions (v2.32.x)
 Feature: admin configures `(accessory → required product)` rules per main product. When customer checks/clicks the accessory, a modal appears asking them to also add the required product.
@@ -202,12 +203,23 @@ Outline pill button matching the filled LÄGG TILL style — pill shape, primary
 - **2.33.2** — Also require *visible* accessories before adding layout body class (follow-up tightening of the v2.33.1 check).
 - **2.33.3** (2026-04-23) — 🔴 **Regression fix:** bundle components were missing from Visma after v2.31.11. Restored the `woocommerce_order_status_processing` hook alongside `completed` so Sharespine picks up components at Visma sync time. Safe because the current implementation is append-only + idempotent (unlike the pre-v2.31.11 destructive pattern that broke Svea).
 - **2.33.4** (2026-04-23) — 🔴 **Fix:** installation radios weren't showing on accessories *without* companion rules (i.e. simple-product accessories where the v2.32.0 popup isn't used). Root cause: `data-main-product` attribute was emitted inside the `accessory_has_companions()` conditional, and the frontend JS keys install-lookup off that attribute. Refactored all 6 emission sites into a shared `emit_accessory_data_attrs()` helper that fires `data-main-product` when EITHER companions OR installation is configured, and added an `accessory_has_installation()` detection helper mirroring the companions one.
+- **2.34.0** (2026-09-14) — Bug-fix release from a full code review (branch `fix/v2.34.0-review`, not yet released):
+  - 🔴 Install radios + click tracking never worked in Bundle Cards layout (`.kr-card` lacked `.sijab-acc-card`; JS now uses `CARD_SEL`).
+  - 🔴 Orphan "Montering av X" line when accessory X failed to add (server now requires X in cart).
+  - 🔴 "Paket först" sorting dropped every product without the bundle meta key (named OR/NOT EXISTS meta clause).
+  - 🔴 Bulk-set per category (and migration/restore) bypassed the backup ring-buffer and wrote `_crosssell_ids` raw — now via `persist_accessory_ids()` + WC CRUD.
+  - Install on horizontal/grid/compact WITHOUT companions now included (former scope gap); popup flow passes card qty + variation; variable accessories get data attrs.
+  - Admin: `$('#post').on('submit')` ReferenceError (was outside the jQuery closure); wrong nonce on "Lägg till montering" thumb fetch; SKU textarea accepts newline/semicolon separators.
+  - Stats: timezone-consistent windows (`stats_since()`), install lines excluded from purchase stats, tracking endpoint validates product IDs + per-IP rate limit (60/min).
+  - Companion qty preserved when the companion is also a checked accessory.
+  - Install price shown incl./excl. moms per shop setting (`wc_get_price_to_display`).
+  - HPOS compatibility declared; dead code removed (`restore_install_cart_item`, empty if-block); visible-accessory lookup cached per request; migration guards missing table.
 
 ## Pending / Future
-- Reservdelar (spare parts) list — designed but not built (candidate för v2.34.0 eller senare)
+- Reservdelar (spare parts) list — designed but not built (candidate för v2.35.0 eller senare)
 - Cards-layout CTA counter doesn't include pending companions/installations (shows "2 produkter" när det faktiskt blir 3 going in)
 - Variable products in bundles — not yet implemented
-- Install radio-inkludering för horisontell/grid/kompakt utan popup-companions — v2.33.3+ kandidat
+- Verify Sharespine hook priority: component lines are appended on `woocommerce_order_status_processing` prio 20; if Sharespine syncs on the same hook at prio ≤ 20 it still misses them.
 - Local Cursor-projekt git structure still confused (use /tmp/acc-push/accessory-tab/ as canonical)
 - test.sijab.com fortfarande v2.32.4 — prod (sijab.com) uppdateras till v2.33.2 efter verifiering
 

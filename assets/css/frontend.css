@@ -1,5 +1,5 @@
 /**
- * Accessory Tab — Frontend Styles v2.10.0
+ * Accessory Tab — Frontend Styles v2.34.0
  * Dustin-inspirerad design: pill qty, meta inuti kort, ljusblå sektion.
  */
 
@@ -1853,7 +1853,7 @@ body.sijab-layout-cards form.cart .wc-pao-addons-container + .single_add_to_cart
 /* Cards / checklist layout: gentle indent so the radio block visually
  * belongs to the accessory row above it. */
 .sijab-acc-card--checklist .sijab-install-options,
-.sijab-acc-card--cards .sijab-install-options {
+.kr-card .sijab-install-options {
 	margin-left: 0 !important;
 }
 

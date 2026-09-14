@@ -1,9 +1,15 @@
 /**
  * Accessory Tab — "Visa alla" toggle + qty selector + add-to-cart sync + stats tracking + checklist total.
- * v2.31.5 — CTA always goes via runBundleFlow (0-acc case also works).
+ * v2.34.0 — card selector covers cards layout (.kr-card); popup/install flow
+ *           handles variable accessories + qty; install works without companions.
  */
 (function () {
 	'use strict';
+
+	// Every accessory "card" root, across layouts. Horizontal/grid/compact/checklist
+	// use .sijab-acc-card; the Bundle Cards layout uses .kr-card (and never had
+	// .sijab-acc-card, which silently disabled install radios + click tracking there).
+	var CARD_SEL = '.sijab-acc-card, .kr-card';
 
 	// ── "Visa alla tillbehör" toggle (desktop) ──
 	document.addEventListener('click', function (e) {
@@ -121,7 +127,7 @@
 		var select = e.target.closest('.sijab-var-select');
 		if (!select) return;
 
-		var card     = select.closest('.sijab-acc-card');
+		var card     = select.closest(CARD_SEL);
 		var selected = select.options[select.selectedIndex];
 		var varId    = select.value;
 
@@ -158,7 +164,7 @@
 		if (!btn || btn.disabled) return;
 		e.preventDefault();
 
-		var card     = btn.closest('.sijab-acc-card');
+		var card     = btn.closest(CARD_SEL);
 		var select   = card ? card.querySelector('.sijab-var-select') : null;
 		if (!select || !select.value) return;
 
@@ -225,7 +231,7 @@
 
 	// ── Statistics tracking ──
 	function getAccessoryId(el) {
-		var card = el.closest('.sijab-acc-card');
+		var card = el.closest(CARD_SEL);
 		return card ? card.getAttribute('data-accessory-id') : null;
 	}
 
@@ -428,7 +434,7 @@
 			// ha hjälp med montering…" on this accessory, push an extra item
 			// with an `install` envelope. Server looks up the admin-configured
 			// tier+price for (main, accessory) and appends an ARB cart line.
-			var card = cb.closest('.sijab-acc-card');
+			var card = cb.closest(CARD_SEL);
 			if (typeof window.sijabGetInstallItem === 'function') {
 				var instItem = window.sijabGetInstallItem(pid, parentId, card);
 				if (instItem) items.push(instItem);
@@ -439,9 +445,18 @@
 			if (window.sijabPendingCompanions && window.sijabPendingCompanions[pid]) {
 				window.sijabPendingCompanions[pid].forEach(function (comp) {
 					if (!comp || !comp.id) return;
-					// Don't duplicate if the companion is already a checked accessory.
-					var dup = items.some(function (it) { return it.product_id === comp.id && !it.variation_id; });
-					if (dup) return;
+					// Don't duplicate if the companion is already a checked accessory —
+					// but keep the required qty (v2.34.0: previously "2 st adapter"
+					// collapsed to the checkbox's qty 1).
+					var existing = null;
+					items.some(function (it) {
+						if (it.product_id === comp.id && !it.variation_id && !it.install) { existing = it; return true; }
+						return false;
+					});
+					if (existing) {
+						existing.quantity = Math.max(existing.quantity || 1, comp.qty || 1);
+						return;
+					}
 					items.push({
 						product_id: comp.id,
 						quantity:   comp.qty || 1,
@@ -948,15 +963,41 @@
 		});
 	}
 
-	// Horizontal/grid/compact layouts: intercept the per-accessory "LÄGG TILL"
-	// button click so the popup can show. If customer accepts "Lägg till båda",
-	// both products are added via the bundle-atomic AJAX endpoint (one round-trip,
-	// no race). If they reject, the original AJAX add proceeds for just the accessory.
-	document.addEventListener('click', function (e) {
-		var btn = e.target.closest('.sijab-acc-atc-btn[data-has-companions="1"]');
-		if (!btn) return;
+	// Read the accessory's current selection from its card: quantity from the
+	// qty input and, for variable accessories, the chosen variation + attributes.
+	// (v2.34.0 — the popup flow used to hard-code quantity 1 and could not add
+	// variable accessories at all.)
+	function readAccessorySelection(btn, accId) {
+		var sel  = { product_id: accId, quantity: 1, variation_id: 0, attributes: {}, is_variable: false };
+		var card = btn.closest(CARD_SEL);
+		var qtyInput = card ? card.querySelector('.sijab-qty-input') : null;
+		if (qtyInput) {
+			sel.quantity = Math.max(1, parseInt(qtyInput.value, 10) || 1);
+		} else {
+			sel.quantity = Math.max(1, parseInt(btn.getAttribute('data-quantity'), 10) || 1);
+		}
+		var varSelect = card ? card.querySelector('.sijab-var-select') : null;
+		if (varSelect) {
+			sel.is_variable  = true;
+			sel.variation_id = parseInt(varSelect.value, 10) || 0;
+			var opt = varSelect.options[varSelect.selectedIndex];
+			try { sel.attributes = JSON.parse((opt && opt.getAttribute('data-attributes')) || '{}'); } catch (err) {}
+		}
+		return sel;
+	}
 
-		// Bypass flag set by the "Endast accessory" branch → let WC AJAX run normally
+	// Horizontal/grid/compact layouts: intercept the per-accessory "LÄGG TILL"
+	// button click when either (a) companion rules exist → show the popup, or
+	// (b) the customer picked "Jag vill ha hjälp med montering" → route through
+	// the atomic endpoint so the ARB line comes along (v2.34.0; before, the
+	// install radio was ignored on the plain LÄGG TILL button).
+	// If the popup is rejected and no install is wanted, the original add
+	// proceeds for just the accessory.
+	document.addEventListener('click', function (e) {
+		var btn = e.target.closest('.sijab-acc-atc-btn[data-main-product]');
+		if (!btn || btn.disabled) return;
+
+		// Bypass flag set by the "Endast accessory" branch → let the default add run
 		if (btn.getAttribute('data-sijab-bypass-popup') === '1') {
 			btn.removeAttribute('data-sijab-bypass-popup');
 			return;
@@ -966,16 +1007,34 @@
 		var mainId = parseInt(btn.getAttribute('data-main-product'), 10);
 		if (!accId || !mainId) return;
 
-		// Dismissal: user already chose "Endast accessory" for this acc in this session
-		if (sessionDismissedCompanions[accId]) return;
+		var selection = readAccessorySelection(btn, accId);
+		// Variable accessory without a chosen variant: let the default handler deal with it.
+		if (selection.is_variable && !selection.variation_id) return;
 
-		var mainMap = (window.sijabCompanions || {})[mainId] || {};
-		var companions = mainMap[accId] || [];
-		if (!companions.length) return;
+		var card = btn.closest(CARD_SEL);
+		var installItem = (typeof window.sijabGetInstallItem === 'function')
+			? window.sijabGetInstallItem(accId, mainId, card)
+			: null;
 
-		// Prevent WC's default AJAX add-to-cart so we can show the popup first.
+		// Companions only apply if configured AND not dismissed earlier this session.
+		var companions = [];
+		if (btn.getAttribute('data-has-companions') === '1' && !sessionDismissedCompanions[accId]) {
+			var mainMap = (window.sijabCompanions || {})[mainId] || {};
+			companions = mainMap[accId] || [];
+		}
+
+		// Nothing for us to do → default WC AJAX / variable-product handler.
+		if (!companions.length && !installItem) return;
+
+		// Prevent the default add-to-cart so we can take over.
 		e.preventDefault();
 		e.stopPropagation();
+
+		if (!companions.length) {
+			// Install requested, no popup: accessory + ARB line in one request.
+			sendHorizontalBundleAdd(selection, [], mainId, false, installItem, btn);
+			return;
+		}
 
 		// Extract accessory info from its card DOM for the popup row.
 		var selfInfo = extractAccessoryInfo(btn);
@@ -1007,13 +1066,18 @@
 		var mainInfoForPopup = canIncludeMain ? mainInfo : null;
 
 		buildCompanionModal(accessoryName, mainProductName, companions,
-			// Accept: atomic bundle add-to-cart (accessory + all companions)
+			// Accept: atomic bundle add-to-cart (main? + accessory + companions + install?)
 			function () {
-				sendHorizontalBundleAdd(accId, companions, mainId, canIncludeMain);
+				sendHorizontalBundleAdd(selection, companions, mainId, canIncludeMain, installItem, btn);
 			},
-			// Reject: remember dismissal and let the original WC AJAX add just the accessory
+			// Reject: remember dismissal. With install selected we still need the
+			// atomic endpoint (accessory + ARB); otherwise let the original add run.
 			function () {
 				sessionDismissedCompanions[accId] = true;
+				if (installItem) {
+					sendHorizontalBundleAdd(selection, [], mainId, false, installItem, btn);
+					return;
+				}
 				btn.setAttribute('data-sijab-bypass-popup', '1');
 				btn.click();
 			},
@@ -1096,11 +1160,15 @@
 		};
 	}
 
-	function sendHorizontalBundleAdd(accId, companions, mainId, includeMain) {
+	// selection: { product_id, quantity, variation_id, attributes } from
+	// readAccessorySelection(). installItem: envelope from sijabGetInstallItem()
+	// or null. btn: the clicked LÄGG TILL element, for visual feedback.
+	function sendHorizontalBundleAdd(selection, companions, mainId, includeMain, installItem, btn) {
 		var ajaxUrl = (typeof sijabAccStats !== 'undefined' && sijabAccStats.ajax_url)
 			? sijabAccStats.ajax_url
 			: '/wp-admin/admin-ajax.php';
 
+		var accId = selection.product_id;
 		var items = [];
 		// Main product — only added if includeMain is true AND not already in
 		// cart (server-side skip_if_in_cart check). For variable products we MUST
@@ -1124,23 +1192,38 @@
 			}
 			items.push(mainItem);
 		}
-		items.push({ product_id: accId, quantity: 1, parent_id: mainId });
+		// The accessory itself — with the customer's qty and, for variable
+		// accessories, the chosen variation (v2.34.0).
+		var accItem = { product_id: accId, quantity: selection.quantity || 1, parent_id: mainId };
+		if (selection.variation_id) {
+			accItem.variation_id = selection.variation_id;
+			accItem.attributes   = selection.attributes || {};
+		}
+		items.push(accItem);
+		trackEvent(accId, 'add_to_cart');
+
 		companions.forEach(function (c) {
 			items.push({ product_id: c.id, quantity: c.qty || 1, parent_id: mainId });
+			trackEvent(c.id, 'add_to_cart');
 		});
 
-		// Install line-item (v2.33.0): look up the accessory's card on the page
-		// and, if its install radio is set to "yes", append the install envelope
-		// so server adds the ARB line alongside the accessory.
-		if (typeof window.sijabGetInstallItem === 'function') {
-			var accCard = document.querySelector('.sijab-acc-card[data-accessory-id="' + accId + '"]');
-			var instItem = window.sijabGetInstallItem(accId, mainId, accCard);
-			if (instItem) items.push(instItem);
-		}
+		// Install line-item (v2.33.0): the envelope is resolved by the caller from
+		// the accessory's card (works for .sijab-acc-card and .kr-card alike).
+		if (installItem) items.push(installItem);
 
 		var body = new FormData();
 		body.append('action', 'sijab_bundle_add_to_cart');
 		body.append('items', JSON.stringify(items));
+
+		// Visual feedback on the clicked button (mirrors the variable-product handler).
+		var origText = btn ? btn.textContent : '';
+		if (btn) { btn.textContent = '…'; btn.classList.add('loading'); }
+		function restoreBtn(label, delay) {
+			if (!btn) return;
+			btn.classList.remove('loading');
+			btn.textContent = label || origText;
+			if (label) setTimeout(function () { btn.textContent = origText; }, delay || 1500);
+		}
 
 		fetch(ajaxUrl, { method: 'POST', body: body, credentials: 'same-origin' })
 			.then(function (r) { return r.json().catch(function () { return {}; }); })
@@ -1149,14 +1232,16 @@
 					if (window.jQuery) {
 						var $ = window.jQuery;
 						$(document.body).trigger('wc_fragment_refresh');
-						$(document.body).trigger('added_to_cart', [(res.data && res.data.fragments) || {}, (res.data && res.data.cart_hash) || '', $('body')]);
+						$(document.body).trigger('added_to_cart', [(res.data && res.data.fragments) || {}, (res.data && res.data.cart_hash) || '', btn ? $(btn) : $('body')]);
 					}
+					restoreBtn('✓', 1500);
 				} else {
 					var msg = (res && res.data && res.data.message) ? res.data.message : 'Kunde inte lägga till i varukorgen';
+					restoreBtn();
 					alert(msg);
 				}
 			})
-			.catch(function () { alert('Nätverksfel. Försök igen.'); });
+			.catch(function () { restoreBtn(); alert('Nätverksfel. Försök igen.'); });
 	}
 
 	// Listen for checkbox changes to trigger the popup.
@@ -1288,7 +1373,7 @@
 			if (!accId || !mainId) return;
 			var cfg = getInstallConfig(mainId, accId);
 			if (!cfg) return;
-			var card = cb.closest('.sijab-acc-card');
+			var card = cb.closest(CARD_SEL);
 			if (!card || card.querySelector('.sijab-install-options')) return;
 			var group = buildInstallRadioGroup(mainId, accId, cfg);
 			// Checklist/cards: install radio is only meaningful when the
@@ -1304,7 +1389,7 @@
 			document.addEventListener('change', function (ev) {
 				var cb = ev.target;
 				if (!cb || !cb.classList || !cb.classList.contains('sijab-checklist__input')) return;
-				var card = cb.closest('.sijab-acc-card');
+				var card = cb.closest(CARD_SEL);
 				if (!card) return;
 				var group = card.querySelector('.sijab-install-options');
 				if (!group) return;
@@ -1323,11 +1408,11 @@
 		// + data-product-id. We skip cards where the checklist injection already ran
 		// (those already have .sijab-install-options).
 		document.querySelectorAll('.sijab-acc-atc-btn[data-main-product]').forEach(function (btn) {
-			var accId  = parseInt(btn.getAttribute('data-product-id') || btn.getAttribute('data-parent-id'), 10);
+			var accId  = parseInt(btn.getAttribute('data-product_id') || btn.getAttribute('data-product-id') || btn.getAttribute('data-parent-id'), 10);
 			var mainId = parseInt(btn.getAttribute('data-main-product'), 10);
 			if (!accId || !mainId) {
 				// Try reading from the parent card.
-				var cardEl = btn.closest('.sijab-acc-card');
+				var cardEl = btn.closest(CARD_SEL);
 				if (cardEl && cardEl.hasAttribute('data-accessory-id')) {
 					accId = parseInt(cardEl.getAttribute('data-accessory-id'), 10);
 				}
@@ -1335,7 +1420,7 @@
 			if (!accId || !mainId) return;
 			var cfg = getInstallConfig(mainId, accId);
 			if (!cfg) return;
-			var card = btn.closest('.sijab-acc-card');
+			var card = btn.closest(CARD_SEL);
 			if (!card || card.querySelector('.sijab-install-options')) return;
 			var group = buildInstallRadioGroup(mainId, accId, cfg);
 			card.appendChild(group);

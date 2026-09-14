@@ -3,7 +3,7 @@
  * Plugin Name: Accessory Tab for WooCommerce
  * Description: Visar tillbehör direkt på produktsidan med produktkort (bild, pris, lagerstatus, "Lägg till"-knapp). Admin: lägg till tillbehör via SKU eller produktsök.
  * Author: HB
- * Version: 2.33.7
+ * Version: 2.34.0
  * License: GPLv2 or later
  * Text Domain: sijab-tillbehor
  */
@@ -37,7 +37,7 @@ class SIJAB_Tillbehor {
 	const INST_SKU      = 'ARB';                             // SKU of the "Montering" product used for installation line items.
 	const BACKUP_META   = '_sijab_accessories_backup';       // [['ts'=>1234567890, 'ids'=>[1,2,3]], ...]  (v2.33.6+, keeps 3 latest)
 	const BACKUP_KEEP   = 3;                                 // how many historical snapshots to retain per product
-	const VERSION       = '2.33.7';
+	const VERSION       = '2.34.0';
 	const OPTION        = 'sijab_tillbehor_settings';
 	const STATS_TABLE   = 'sijab_acc_stats';
 
@@ -52,6 +52,9 @@ class SIJAB_Tillbehor {
 
 	/** @var int|null Cached ARB-product ID (resolved by SKU). */
 	private $install_product_id = null;
+
+	/** @var array<int, WC_Product[]> Per-request cache of visible accessory products keyed by main product ID (v2.34.0). */
+	private $visible_accessories_cache = [];
 
 	public function __construct() {
 		// Frontend hooks — registered dynamically based on placement setting.
@@ -152,8 +155,8 @@ class SIJAB_Tillbehor {
 		// ──────────────────────────────────────────────────────────────
 		// Apply the admin-configured install price to the ARB cart line.
 		add_action( 'woocommerce_before_calculate_totals', [ $this, 'apply_install_cart_price' ], 20, 1 );
-		// Survive cart-session reload: re-attach meta from session row.
-		add_filter( 'woocommerce_get_cart_item_from_session', [ $this, 'restore_install_cart_item' ], 10, 2 );
+		// (v2.34.0: the former woocommerce_get_cart_item_from_session filter was
+		// removed — WC already restores every custom cart-item key from session.)
 		// Display "Monterar: Tanklock" in cart/checkout item meta.
 		add_filter( 'woocommerce_get_item_data', [ $this, 'display_install_item_data' ], 10, 2 );
 		// Override displayed product name on the ARB line: "Montering av Tanklock".
@@ -592,6 +595,13 @@ class SIJAB_Tillbehor {
 		global $wpdb;
 		$table = $wpdb->prefix . 'woocommerce_bundled_items';
 
+		// Guard: the button is only rendered when the table exists, but a stale
+		// form POST must not produce a raw DB error.
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			wp_safe_redirect( add_query_arg( [ 'page' => 'sijab-tillbehor' ], admin_url( 'admin.php' ) ) . '#sijab-tab-verktyg' );
+			exit;
+		}
+
 		$rows = $wpdb->get_results( "SELECT bundle_id, product_id FROM {$table} ORDER BY bundle_id ASC", ARRAY_A );
 
 		$bundles = [];
@@ -610,9 +620,8 @@ class SIJAB_Tillbehor {
 
 			if ( empty( $added ) ) { $skipped++; continue; }
 
-			update_post_meta( $bundle_id, self::META_KEY, $merged );
-			// Sync → WooCommerce cross-sells.
-			update_post_meta( $bundle_id, '_crosssell_ids', $merged );
+			// Backup + meta + cross-sells via the WC product object (v2.34.0).
+			if ( ! $this->persist_accessory_ids( (int) $bundle_id, $merged ) ) { $skipped++; continue; }
 			$updated++;
 			$details[ $bundle_id ] = array_values( $added );
 		}
@@ -687,7 +696,9 @@ class SIJAB_Tillbehor {
 									if ( ! is_array( $b ) || empty( $b['ids'] ) ) continue;
 									$ts    = (int) ( $b['ts'] ?? 0 );
 									$count = count( (array) $b['ids'] );
-									$diff  = $ts ? human_time_diff( $ts, current_time( 'timestamp' ) ) : '?';
+									// $ts is a UTC unix timestamp (time()), so compare against time(),
+									// not the offset current_time('timestamp') (v2.34.0 fix).
+									$diff  = $ts ? human_time_diff( $ts, time() ) : '?';
 									$restore_url = wp_nonce_url(
 										add_query_arg( [
 											'page'              => 'sijab-tillbehor',
@@ -741,15 +752,9 @@ class SIJAB_Tillbehor {
 		$restore_ids = array_values( array_filter( array_map( 'absint', (array) $backups[ $idx ]['ids'] ) ) );
 		if ( empty( $restore_ids ) ) return;
 
-		// Snapshot current state before overwrite so admin can flip back.
-		$current = (array) get_post_meta( $pid, self::META_KEY, true );
-		$current = array_values( array_filter( array_map( 'absint', $current ) ) );
-		if ( $current && $current !== $restore_ids ) {
-			$this->push_accessory_backup( $pid, $current );
-		}
-
-		update_post_meta( $pid, self::META_KEY, $restore_ids );
-		update_post_meta( $pid, '_crosssell_ids', $restore_ids );
+		// persist_accessory_ids() snapshots the current list first, so the
+		// admin can flip back after a restore (v2.34.0: shared helper).
+		if ( ! $this->persist_accessory_ids( $pid, $restore_ids ) ) return;
 
 		wp_safe_redirect( add_query_arg( [
 			'page'                  => 'sijab-tillbehor',
@@ -933,17 +938,48 @@ class SIJAB_Tillbehor {
 		foreach ( $query->posts as $product_id ) {
 			$product_id = absint( $product_id );
 			$ids = array_values( array_diff( $accessory_ids, [ $product_id ] ) );
-			if ( ! empty( $ids ) ) {
-				update_post_meta( $product_id, self::META_KEY, $ids );
-			} else {
-				delete_post_meta( $product_id, self::META_KEY );
+			// v2.34.0: goes through persist_accessory_ids() so every product gets
+			// a backup snapshot before its list is replaced (previously the bulk
+			// tool bypassed the backup ring-buffer entirely).
+			if ( $this->persist_accessory_ids( $product_id, $ids ) ) {
+				$updated++;
 			}
-			// Sync → WooCommerce cross-sells.
-			update_post_meta( $product_id, '_crosssell_ids', $ids );
-			$updated++;
 		}
 
 		wp_send_json_success( [ 'updated' => $updated ] );
+	}
+
+	/**
+	 * Write a new accessory-ID list for a product: snapshot the previous list
+	 * into the backup ring-buffer, store the meta, and sync WooCommerce
+	 * cross-sells — all via the WC_Product CRUD so caches/lookup tables stay
+	 * consistent. Used by the Verktyg tools (bulk, migration, restore).
+	 * The product-edit save path does NOT use this (WC saves the object itself).
+	 *
+	 * @return bool False if the product could not be loaded.
+	 */
+	private function persist_accessory_ids( int $product_id, array $ids ): bool {
+		$product = wc_get_product( $product_id );
+		if ( ! $product ) return false;
+
+		$ids = array_values( array_unique( array_diff( array_filter( array_map( 'absint', $ids ) ), [ $product_id ] ) ) );
+
+		$old_ids = (array) get_post_meta( $product_id, self::META_KEY, true );
+		$old_ids = array_values( array_filter( array_map( 'absint', $old_ids ) ) );
+		if ( ! empty( $old_ids ) && $old_ids !== $ids ) {
+			$this->push_accessory_backup( $product_id, $old_ids );
+		}
+
+		if ( empty( $ids ) ) {
+			$product->delete_meta_data( self::META_KEY );
+		} else {
+			$product->update_meta_data( self::META_KEY, $ids );
+		}
+		$product->set_cross_sell_ids( $ids );
+		$product->save();
+
+		unset( $this->visible_accessories_cache[ $product_id ] );
+		return true;
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -1003,18 +1039,33 @@ class SIJAB_Tillbehor {
 		}
 		if ( ! $product instanceof WC_Product ) return $classes;
 
-		$ids = $this->get_accessory_ids( $product->get_id() );
-		if ( empty( $ids ) ) return $classes;
-
-		$has_visible = false;
-		foreach ( $ids as $id ) {
-			$acc = wc_get_product( $id );
-			if ( $acc && $acc->is_visible() ) { $has_visible = true; break; }
-		}
-		if ( ! $has_visible ) return $classes;  // section won't render → don't scope layout CSS
+		// Section won't render without visible accessories → don't scope layout CSS.
+		if ( empty( $this->get_visible_accessories( $product->get_id() ) ) ) return $classes;
 
 		$classes[] = 'sijab-layout-' . sanitize_html_class( $s['layout'] );
 		return $classes;
+	}
+
+	/**
+	 * Resolve the visible accessory products for a main product, cached per
+	 * request. body_class, enqueue and render all need the same answer, and
+	 * previously each of them re-ran wc_get_product() for every accessory.
+	 *
+	 * @return WC_Product[]
+	 */
+	private function get_visible_accessories( int $product_id ): array {
+		if ( isset( $this->visible_accessories_cache[ $product_id ] ) ) {
+			return $this->visible_accessories_cache[ $product_id ];
+		}
+		$accessories = [];
+		foreach ( $this->get_accessory_ids( $product_id ) as $id ) {
+			$acc = wc_get_product( $id );
+			if ( $acc && $acc->is_visible() ) {
+				$accessories[] = $acc;
+			}
+		}
+		$this->visible_accessories_cache[ $product_id ] = $accessories;
+		return $accessories;
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -1028,16 +1079,7 @@ class SIJAB_Tillbehor {
 		global $product;
 		if ( ! $product instanceof WC_Product ) return;
 
-		$ids = $this->get_accessory_ids( $product->get_id() );
-		if ( empty( $ids ) ) return;
-
-		$accessories = [];
-		foreach ( $ids as $id ) {
-			$acc = wc_get_product( $id );
-			if ( $acc && $acc->is_visible() ) {
-				$accessories[] = $acc;
-			}
-		}
+		$accessories = $this->get_visible_accessories( $product->get_id() );
 		if ( empty( $accessories ) ) return;
 
 		// Emit companion-requirements map for this main product so the popup
@@ -1701,6 +1743,9 @@ class SIJAB_Tillbehor {
 							<button type="button"
 							        class="button sijab-acc-atc-btn sijab-var-atc-btn"
 							        data-parent-id="<?php echo absint( $id ); ?>"
+							        data-product_id="<?php echo absint( $id ); ?>"
+							        data-sijab_acc_parent="<?php echo absint( $GLOBALS['product']->get_id() ); ?>"
+							        <?php echo $this->emit_accessory_data_attrs( (int) $id, (int) $GLOBALS['product']->get_id() ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped — helper handles esc_attr internally ?>
 							        disabled>
 								<?php esc_html_e( 'Lägg till', 'sijab-tillbehor' ); ?>
 							</button>
@@ -1796,7 +1841,7 @@ class SIJAB_Tillbehor {
 				<p class="form-field sijab-ff">
 					<label for="sijab_accessories_skus"><?php esc_html_e( 'Via SKU (kommaseparerat)', 'sijab-tillbehor' ); ?></label>
 					<span class="sijab-field-wrap">
-						<textarea id="sijab_accessories_skus" name="sijab_accessories_skus" rows="2" class="sijab-acc-field" placeholder="EX123, EX456, EX789"></textarea>
+						<textarea id="sijab_accessories_skus" name="sijab_accessories_skus" rows="3" class="sijab-acc-field" placeholder="<?php esc_attr_e( 'EX123, EX456, EX789 — eller en SKU per rad', 'sijab-tillbehor' ); ?>"></textarea>
 					</span>
 				</p>
 
@@ -2090,8 +2135,12 @@ class SIJAB_Tillbehor {
 		// gets a clear notice afterwards instead of silent dedup/strip/miss.
 		$report = [ 'added' => [], 'duplicate' => [], 'self' => [], 'not_found' => [] ];
 		if ( ! empty( $_POST['sijab_accessories_skus'] ) ) {
-			$sku_str = sanitize_text_field( wp_unslash( $_POST['sijab_accessories_skus'] ) );
-			$sku_arr = array_filter( array_map( 'trim', explode( ',', $sku_str ) ) );
+			// v2.34.0: split on comma, semicolon OR newline BEFORE sanitizing.
+			// sanitize_text_field() collapses line breaks into spaces, which used
+			// to merge "ABC\nDEF" into one unknown SKU "ABC DEF".
+			$sku_raw = (string) wp_unslash( $_POST['sijab_accessories_skus'] );
+			$sku_arr = preg_split( '/[,;\r\n]+/', $sku_raw, -1, PREG_SPLIT_NO_EMPTY );
+			$sku_arr = array_values( array_unique( array_filter( array_map( 'trim', array_map( 'sanitize_text_field', (array) $sku_arr ) ) ) ) );
 			foreach ( $sku_arr as $sku ) {
 				$pid_sku = (int) wc_get_product_id_by_sku( $sku );
 				if ( ! $pid_sku ) {
@@ -2454,16 +2503,20 @@ class SIJAB_Tillbehor {
 			return;
 		}
 
-		$base_price = $this->get_install_base_price();
-		$enriched   = [];
+		$base_price  = $this->get_install_base_price();
+		$arb_product = $this->get_install_product_id() ? wc_get_product( $this->get_install_product_id() ) : null;
+		$enriched    = [];
 		foreach ( $map as $acc_id => $cfg ) {
 			$accessory = wc_get_product( $acc_id );
 			if ( ! $accessory ) continue;
 			$price = $this->calc_install_price( $cfg['tier'], (float) $cfg['custom_price'], $base_price );
+			// v2.34.0: show the price the same way the shop shows every other
+			// price (incl./excl. moms per WC settings) instead of the raw amount.
+			$display_price = $arb_product ? (float) wc_get_price_to_display( $arb_product, [ 'price' => $price ] ) : $price;
 			$enriched[ $acc_id ] = [
 				'tier'            => $cfg['tier'],
 				'price'           => $price,
-				'price_formatted' => html_entity_decode( wp_strip_all_tags( wc_price( $price ) ) ),
+				'price_formatted' => html_entity_decode( wp_strip_all_tags( wc_price( $display_price ) ) ),
 				'accessory_name'  => html_entity_decode( wp_strip_all_tags( $accessory->get_name() ) ),
 			];
 		}
@@ -3281,7 +3334,9 @@ class SIJAB_Tillbehor {
 				var payload = new FormData();
 				payload.append('action', 'sijab_get_product_thumb');
 				payload.append('product_id', accId);
-				payload.append('nonce', '" . esc_js( wp_create_nonce( 'sijab_get_product_thumb' ) ) . "');
+				// v2.34.0: the endpoint verifies the 'sijab_save_accessories' nonce (same as
+				// the accessory-list add flow); the old 'sijab_get_product_thumb' nonce always 403'd.
+				payload.append('nonce', $('#sijab_accessories_nonce').val());
 				fetch(ajaxurl, { method: 'POST', body: payload, credentials: 'same-origin' })
 					.then(function(r){ return r.json(); })
 					.then(function(res){
@@ -3321,13 +3376,16 @@ class SIJAB_Tillbehor {
 				$(this).closest('.sijab-inst-rule').remove();
 				window.sijabSyncInstJson();
 			});
-		});
+
 			// Safety: always sync JSON right before form submit.
+			// (v2.34.0: moved INSIDE the jQuery closure — it used to sit outside,
+			// where `$` is undefined in wp-admin and threw a ReferenceError.)
 			$('#post').on('submit', function() {
 				syncJson();
 				if (typeof window.sijabSyncReqJson === 'function') window.sijabSyncReqJson();
 				if (typeof window.sijabSyncInstJson === 'function') window.sijabSyncInstJson();
 			});
+		});
 		";
 		wp_add_inline_script( 'jquery-ui-sortable', $js );
 	}
@@ -4212,8 +4270,27 @@ class SIJAB_Tillbehor {
 		$orderby = isset( $_GET['orderby'] ) ? sanitize_text_field( $_GET['orderby'] ) : '';
 
 		if ( 'bundles_first' === $orderby ) {
-			$query->set( 'meta_key', self::BUNDLE_FLAG );
-			$query->set( 'orderby', [ 'meta_value' => 'DESC', 'title' => 'ASC' ] );
+			// v2.34.0: previously set meta_key directly, which INNER JOINs postmeta
+			// and silently drops every product that never had the flag written
+			// (i.e. never saved with this plugin active). Use a named OR clause
+			// with NOT EXISTS so all products stay in the result and bundles sort first.
+			$existing = $query->get( 'meta_query' ) ?: [];
+			$bundle_clause = [
+				'relation'          => 'OR',
+				'sijab_bundle_flag' => [
+					'key'     => self::BUNDLE_FLAG,
+					'compare' => 'EXISTS',
+				],
+				'sijab_bundle_none' => [
+					'key'     => self::BUNDLE_FLAG,
+					'compare' => 'NOT EXISTS',
+				],
+			];
+			$query->set( 'meta_query', ! empty( $existing )
+				? [ 'relation' => 'AND', $existing, $bundle_clause ]
+				: $bundle_clause
+			);
+			$query->set( 'orderby', [ 'sijab_bundle_flag' => 'DESC', 'title' => 'ASC' ] );
 		}
 
 		// Also support ?bundle_only=1 to show only bundles.
@@ -4395,6 +4472,9 @@ class SIJAB_Tillbehor {
 
 		$added_keys = [];
 		$errors     = [];
+		// Product IDs that ended up in the cart during THIS request (added now, or
+		// skipped because already present). Used to refuse orphan install lines.
+		$in_cart_now = [];
 
 		foreach ( $items as $item ) {
 			if ( ! is_array( $item ) ) continue;
@@ -4414,6 +4494,18 @@ class SIJAB_Tillbehor {
 
 				$inst_map = $this->get_accessory_installations( $main_id );
 				if ( empty( $inst_map[ $for_acc_id ] ) ) continue;  // not configured — reject
+
+				// v2.34.0: never add "Montering av X" unless X is actually in the
+				// cart — either added earlier in this batch or already present
+				// from before. Otherwise an out-of-stock accessory left an orphan
+				// ARB line behind.
+				$acc_in_cart = isset( $in_cart_now[ $for_acc_id ] );
+				if ( ! $acc_in_cart ) {
+					foreach ( WC()->cart->get_cart() as $cart_item ) {
+						if ( (int) ( $cart_item['product_id'] ?? 0 ) === $for_acc_id ) { $acc_in_cart = true; break; }
+					}
+				}
+				if ( ! $acc_in_cart ) { $errors[] = $for_acc_id; continue; }
 
 				$cfg        = $inst_map[ $for_acc_id ];
 				$base_price = $this->get_install_base_price();
@@ -4482,6 +4574,7 @@ class SIJAB_Tillbehor {
 					}
 				}
 				if ( $already_in_cart ) {
+					$in_cart_now[ $product_id ] = true;
 					continue;  // skip — don't re-add
 				}
 			}
@@ -4497,6 +4590,7 @@ class SIJAB_Tillbehor {
 			$cart_key = WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variations );
 			if ( $cart_key ) {
 				$added_keys[] = $cart_key;
+				$in_cart_now[ $product_id ] = true;
 			} else {
 				$errors[] = $product_id;
 			}
@@ -4570,9 +4664,23 @@ class SIJAB_Tillbehor {
 		$accessory_id = absint( $_POST['accessory_id'] ?? 0 );
 		$event_type   = sanitize_text_field( $_POST['event_type'] ?? '' );
 
-		if ( ! $parent_id || ! $accessory_id || ! in_array( $event_type, $valid_types, true ) ) {
+		if ( ! $parent_id || ! $accessory_id || $parent_id === $accessory_id || ! in_array( $event_type, $valid_types, true ) ) {
 			wp_send_json_error( 'Invalid data', 400 );
 		}
+
+		// v2.34.0: this endpoint is public by design (sendBeacon from cached
+		// product pages, so a nonce would expire with the page cache). Instead:
+		// (a) both IDs must be real products, (b) per-IP rate limit.
+		if ( ! wc_get_product( $parent_id ) || ! wc_get_product( $accessory_id ) ) {
+			wp_send_json_error( 'Invalid product', 400 );
+		}
+		$ip  = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+		$key = 'sijab_acc_rl_' . md5( $ip );
+		$hits = (int) get_transient( $key );
+		if ( $hits >= 60 ) {
+			wp_send_json_error( 'Too many requests', 429 );
+		}
+		set_transient( $key, $hits + 1, MINUTE_IN_SECONDS );
 
 		global $wpdb;
 		$wpdb->insert(
@@ -4590,13 +4698,23 @@ class SIJAB_Tillbehor {
 	}
 
 	/**
+	 * Format a "N days ago" boundary in the SAME timezone the stats rows are
+	 * written in (site-local via current_time('mysql')). Before v2.34.0 the
+	 * filters used gmdate() while inserts used local time, so every window
+	 * was shifted by the site's UTC offset.
+	 */
+	private function stats_since( int $days ): string {
+		return wp_date( 'Y-m-d H:i:s', time() - $days * DAY_IN_SECONDS );
+	}
+
+	/**
 	 * Cron: delete stats older than 1 year.
 	 */
 	public function cleanup_old_stats(): void {
 		global $wpdb;
 		$wpdb->query( $wpdb->prepare(
 			"DELETE FROM {$wpdb->prefix}" . self::STATS_TABLE . " WHERE created_at < %s",
-			gmdate( 'Y-m-d H:i:s', strtotime( '-1 year' ) )
+			$this->stats_since( 365 )
 		) );
 	}
 
@@ -4657,6 +4775,9 @@ class SIJAB_Tillbehor {
 		foreach ( $order->get_items() as $item ) {
 			$parent_id = (int) $item->get_meta( '_sijab_acc_parent' );
 			if ( ! $parent_id ) continue;
+			// Installation (ARB) lines are a service on top of an accessory, not an
+			// accessory purchase — don't count them in the accessory stats (v2.34.0).
+			if ( $item->get_meta( '_sijab_install_for_acc_id' ) ) continue;
 
 			$product_id = $item->get_product_id();
 
@@ -4715,7 +4836,7 @@ class SIJAB_Tillbehor {
 			case '1yr': $days = 365; break;
 			default:    $days = 30;
 		}
-		$since = gmdate( 'Y-m-d H:i:s', strtotime( "-{$days} days" ) );
+		$since = $this->stats_since( $days );
 
 		// Summary counts.
 		$total_clicks   = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE event_type != 'purchase' AND created_at >= %s", $since ) );
@@ -4944,9 +5065,6 @@ class SIJAB_Tillbehor {
 	 */
 	public function apply_install_cart_price( $cart ): void {
 		if ( ! $cart || ! is_a( $cart, 'WC_Cart' ) ) return;
-		if ( did_action( 'woocommerce_before_calculate_totals' ) >= 2 && doing_action( 'woocommerce_before_calculate_totals' ) ) {
-			// Avoid infinite recursion via nested actions.
-		}
 		foreach ( $cart->get_cart() as $cart_item ) {
 			if ( empty( $cart_item['_sijab_install_price'] ) ) continue;
 			$price = (float) $cart_item['_sijab_install_price'];
@@ -4955,20 +5073,6 @@ class SIJAB_Tillbehor {
 				$cart_item['data']->set_price( $price );
 			}
 		}
-	}
-
-	/**
-	 * Re-attach installation meta to cart items loaded from session so the
-	 * custom price / display data survive across page loads.
-	 */
-	public function restore_install_cart_item( array $cart_item, array $values ): array {
-		$keys = [ '_sijab_install_price', '_sijab_install_for_acc_id', '_sijab_install_for_acc_name', '_sijab_install_tier', '_sijab_install_unique' ];
-		foreach ( $keys as $k ) {
-			if ( isset( $values[ $k ] ) && ! isset( $cart_item[ $k ] ) ) {
-				$cart_item[ $k ] = $values[ $k ];
-			}
-		}
-		return $cart_item;
 	}
 
 	/**
@@ -5071,6 +5175,16 @@ register_activation_hook( __FILE__, function() {
 // Deactivation: unschedule cron.
 register_deactivation_hook( __FILE__, function() {
 	SIJAB_Tillbehor::unschedule_cleanup();
+} );
+
+// Declare HPOS (custom order tables) compatibility. All order access in this
+// plugin goes through WC_Order CRUD (get_meta/update_meta_data/get_items), so
+// it is compatible — without this declaration WooCommerce still flags the
+// plugin as "incompatible" in the HPOS settings screen (v2.34.0).
+add_action( 'before_woocommerce_init', function() {
+	if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
+		\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
+	}
 } );
 
 add_action( 'plugins_loaded', function() {

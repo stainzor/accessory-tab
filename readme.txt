@@ -1,5 +1,16 @@
 Accessory Tab for WooCommerce
 
+v2.34.0
+- Fix: montering (radioknappar + ARB-rad) fungerade inte i Bundle Cards-layouten
+- Fix: monteringsrad kunde laggas till utan sitt tillbehor (t.ex. slut i lager)
+- Fix: "Paket forst"-sortering dolde produkter utan paket-flagga
+- Fix: masslagg per kategori / migrering / aterstallning tar nu backup och skriver via WC-produktobjektet
+- Nytt: montering inkluderas aven pa horisontell/grid/kompakt utan popup-regler; popup-flodet tar med antal och vald variant; variabla tillbehor stods
+- Fix: JS-fel i produktredigeraren, fel nonce vid "Lagg till montering", SKU-falt accepterar radbrytning/semikolon
+- Fix: statistik-tidsfonster i ratt tidszon, monteringsrader raknas inte som tillbehorskop, spamskydd pa sparnings-endpointen
+- Fix: companion-antal bevaras, monteringspris visas inkl/exkl moms enligt butiksinstallning
+- HPOS-kompatibilitet deklarerad, dod kod borttagen
+
 v2.4.0
 - Nytt mappnamn: accessory-tab (ersatter sijab-tillbehor-tab-1.2.0)
 - Nytt pluginnamn: Accessory Tab for WooCommerce
