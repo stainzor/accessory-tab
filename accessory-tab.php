@@ -952,15 +952,20 @@ class SIJAB_Tillbehor {
 	/**
 	 * Write a new accessory-ID list for a product: snapshot the previous list
 	 * into the backup ring-buffer, store the meta, and sync WooCommerce
-	 * cross-sells — all via the WC_Product CRUD so caches/lookup tables stay
-	 * consistent. Used by the Verktyg tools (bulk, migration, restore).
+	 * cross-sells. Used by the Verktyg tools (bulk, migration, restore).
 	 * The product-edit save path does NOT use this (WC saves the object itself).
 	 *
-	 * @return bool False if the product could not be loaded.
+	 * Deliberately writes postmeta directly instead of WC_Product::save():
+	 * a full save per product fires woocommerce_update_product, REST
+	 * webhooks and ERP/Sharespine product-sync listeners — for a bulk run
+	 * over a whole category that means hundreds of external syncs and a
+	 * likely PHP timeout. WC's data store reads _crosssell_ids straight from
+	 * postmeta, so direct writes + transient/cache flush are sufficient.
+	 *
+	 * @return bool False if the ID is not a product.
 	 */
 	private function persist_accessory_ids( int $product_id, array $ids ): bool {
-		$product = wc_get_product( $product_id );
-		if ( ! $product ) return false;
+		if ( ! in_array( get_post_type( $product_id ), [ 'product', 'product_variation' ], true ) ) return false;
 
 		$ids = array_values( array_unique( array_diff( array_filter( array_map( 'absint', $ids ) ), [ $product_id ] ) ) );
 
@@ -971,12 +976,16 @@ class SIJAB_Tillbehor {
 		}
 
 		if ( empty( $ids ) ) {
-			$product->delete_meta_data( self::META_KEY );
+			delete_post_meta( $product_id, self::META_KEY );
 		} else {
-			$product->update_meta_data( self::META_KEY, $ids );
+			update_post_meta( $product_id, self::META_KEY, $ids );
 		}
-		$product->set_cross_sell_ids( $ids );
-		$product->save();
+		update_post_meta( $product_id, '_crosssell_ids', $ids );
+
+		// Make sure already-instantiated product objects / transients don't
+		// serve the old cross-sell list.
+		wc_delete_product_transients( $product_id );
+		clean_post_cache( $product_id );
 
 		unset( $this->visible_accessories_cache[ $product_id ] );
 		return true;
@@ -2140,7 +2149,9 @@ class SIJAB_Tillbehor {
 			// to merge "ABC\nDEF" into one unknown SKU "ABC DEF".
 			$sku_raw = (string) wp_unslash( $_POST['sijab_accessories_skus'] );
 			$sku_arr = preg_split( '/[,;\r\n]+/', $sku_raw, -1, PREG_SPLIT_NO_EMPTY );
-			$sku_arr = array_values( array_unique( array_filter( array_map( 'trim', array_map( 'sanitize_text_field', (array) $sku_arr ) ) ) ) );
+			// No array_unique here: a repeated SKU must reach the loop so it is
+			// reported as "duplicate" (v2.33.5 report semantics).
+			$sku_arr = array_values( array_filter( array_map( 'trim', array_map( 'sanitize_text_field', (array) $sku_arr ) ) ) );
 			foreach ( $sku_arr as $sku ) {
 				$pid_sku = (int) wc_get_product_id_by_sku( $sku );
 				if ( ! $pid_sku ) {
@@ -4272,25 +4283,14 @@ class SIJAB_Tillbehor {
 		if ( 'bundles_first' === $orderby ) {
 			// v2.34.0: previously set meta_key directly, which INNER JOINs postmeta
 			// and silently drops every product that never had the flag written
-			// (i.e. never saved with this plugin active). Use a named OR clause
-			// with NOT EXISTS so all products stay in the result and bundles sort first.
-			$existing = $query->get( 'meta_query' ) ?: [];
-			$bundle_clause = [
-				'relation'          => 'OR',
-				'sijab_bundle_flag' => [
-					'key'     => self::BUNDLE_FLAG,
-					'compare' => 'EXISTS',
-				],
-				'sijab_bundle_none' => [
-					'key'     => self::BUNDLE_FLAG,
-					'compare' => 'NOT EXISTS',
-				],
-			];
-			$query->set( 'meta_query', ! empty( $existing )
-				? [ 'relation' => 'AND', $existing, $bundle_clause ]
-				: $bundle_clause
-			);
-			$query->set( 'orderby', [ 'sijab_bundle_flag' => 'DESC', 'title' => 'ASC' ] );
+			// (i.e. never saved with this plugin active). A meta_query OR/NOT EXISTS
+			// variant was tried first, but WP then LEFT JOINs postmeta on post_id
+			// only and GROUPs BY ID, so ORDER BY meta_value picks an arbitrary meta
+			// row for non-bundles. Do it explicitly in posts_clauses instead: one
+			// LEFT JOIN restricted to the flag key → at most one row per product,
+			// deterministic order, every product kept.
+			$query->set( 'sijab_bundles_first', true );
+			add_filter( 'posts_clauses', [ $this, 'bundles_first_clauses' ], 20, 2 );
 		}
 
 		// Also support ?bundle_only=1 to show only bundles.
@@ -4306,6 +4306,21 @@ class SIJAB_Tillbehor {
 				]
 			) );
 		}
+	}
+
+	/**
+	 * posts_clauses: "Paket först" sorting. Only acts on the query that
+	 * handle_bundle_filter() flagged with the sijab_bundles_first query var.
+	 */
+	public function bundles_first_clauses( array $clauses, $query ): array {
+		if ( ! $query instanceof WP_Query || ! $query->get( 'sijab_bundles_first' ) ) return $clauses;
+		global $wpdb;
+		$clauses['join']   .= $wpdb->prepare(
+			" LEFT JOIN {$wpdb->postmeta} AS sijab_bf ON ( {$wpdb->posts}.ID = sijab_bf.post_id AND sijab_bf.meta_key = %s )",
+			self::BUNDLE_FLAG
+		);
+		$clauses['orderby'] = "( sijab_bf.meta_value = '1' ) DESC, {$wpdb->posts}.post_title ASC";
+		return $clauses;
 	}
 
 	// ──────────────────────────────────────────────────────────────
@@ -4452,6 +4467,20 @@ class SIJAB_Tillbehor {
 	}
 
 	/**
+	 * Is a product (optionally a specific variation) currently in WC()->cart?
+	 * Pass $variation_id = -1 (default) to match any variation / simple line.
+	 */
+	private function is_product_in_cart( int $product_id, int $variation_id = -1 ): bool {
+		if ( ! $product_id || is_null( WC()->cart ) ) return false;
+		foreach ( WC()->cart->get_cart() as $cart_item ) {
+			if ( (int) ( $cart_item['product_id'] ?? 0 ) !== $product_id ) continue;
+			if ( $variation_id >= 0 && (int) ( $cart_item['variation_id'] ?? 0 ) !== $variation_id ) continue;
+			return true;
+		}
+		return false;
+	}
+
+	/**
 	 * AJAX: batch add main product + selected accessories in a single request.
 	 *
 	 * Runs add_to_cart() sequentially in the same PHP process so WC cart-session
@@ -4472,9 +4501,6 @@ class SIJAB_Tillbehor {
 
 		$added_keys = [];
 		$errors     = [];
-		// Product IDs that ended up in the cart during THIS request (added now, or
-		// skipped because already present). Used to refuse orphan install lines.
-		$in_cart_now = [];
 
 		foreach ( $items as $item ) {
 			if ( ! is_array( $item ) ) continue;
@@ -4496,16 +4522,10 @@ class SIJAB_Tillbehor {
 				if ( empty( $inst_map[ $for_acc_id ] ) ) continue;  // not configured — reject
 
 				// v2.34.0: never add "Montering av X" unless X is actually in the
-				// cart — either added earlier in this batch or already present
-				// from before. Otherwise an out-of-stock accessory left an orphan
-				// ARB line behind.
-				$acc_in_cart = isset( $in_cart_now[ $for_acc_id ] );
-				if ( ! $acc_in_cart ) {
-					foreach ( WC()->cart->get_cart() as $cart_item ) {
-						if ( (int) ( $cart_item['product_id'] ?? 0 ) === $for_acc_id ) { $acc_in_cart = true; break; }
-					}
-				}
-				if ( ! $acc_in_cart ) { $errors[] = $for_acc_id; continue; }
+				// cart — either added earlier in this batch (WC()->cart already
+				// holds it) or present from before. Otherwise an out-of-stock
+				// accessory left an orphan ARB line behind.
+				if ( ! $this->is_product_in_cart( $for_acc_id ) ) { $errors[] = $for_acc_id; continue; }
 
 				$cfg        = $inst_map[ $for_acc_id ];
 				$base_price = $this->get_install_base_price();
@@ -4564,19 +4584,8 @@ class SIJAB_Tillbehor {
 			// auto-include in horizontal-layout popup flow — we want the tank
 			// added when customer first triggers the popup, but NOT duplicated
 			// if they trigger it a second time from another accessory.
-			if ( ! empty( $item['skip_if_in_cart'] ) ) {
-				$already_in_cart = false;
-				foreach ( WC()->cart->get_cart() as $cart_item ) {
-					if ( (int) ( $cart_item['product_id'] ?? 0 ) === $product_id
-					     && (int) ( $cart_item['variation_id'] ?? 0 ) === $variation_id ) {
-						$already_in_cart = true;
-						break;
-					}
-				}
-				if ( $already_in_cart ) {
-					$in_cart_now[ $product_id ] = true;
-					continue;  // skip — don't re-add
-				}
+			if ( ! empty( $item['skip_if_in_cart'] ) && $this->is_product_in_cart( $product_id, $variation_id ) ) {
+				continue;  // skip — don't re-add
 			}
 
 			// Tag accessory lines with parent for order tracking.
@@ -4590,7 +4599,6 @@ class SIJAB_Tillbehor {
 			$cart_key = WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variations );
 			if ( $cart_key ) {
 				$added_keys[] = $cart_key;
-				$in_cart_now[ $product_id ] = true;
 			} else {
 				$errors[] = $product_id;
 			}
@@ -4671,10 +4679,19 @@ class SIJAB_Tillbehor {
 		// v2.34.0: this endpoint is public by design (sendBeacon from cached
 		// product pages, so a nonce would expire with the page cache). Instead:
 		// (a) both IDs must be real products, (b) per-IP rate limit.
-		if ( ! wc_get_product( $parent_id ) || ! wc_get_product( $accessory_id ) ) {
+		// get_post_type() is a single cached lookup — cheaper than loading two
+		// full WC_Product objects on every view/click beacon.
+		$product_types = [ 'product', 'product_variation' ];
+		if ( ! in_array( get_post_type( $parent_id ), $product_types, true ) || ! in_array( get_post_type( $accessory_id ), $product_types, true ) ) {
 			wp_send_json_error( 'Invalid product', 400 );
 		}
-		$ip  = isset( $_SERVER['REMOTE_ADDR'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
+		// WC_Geolocation::get_ip_address() honours the proxy headers WooCommerce
+		// is configured to trust (X-Real-IP / X-Forwarded-For). Raw REMOTE_ADDR
+		// behind Cloudflare/LiteSpeed would put every visitor in one bucket.
+		$ip = class_exists( 'WC_Geolocation' ) ? (string) WC_Geolocation::get_ip_address() : '';
+		if ( '' === $ip && isset( $_SERVER['REMOTE_ADDR'] ) ) {
+			$ip = sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) );
+		}
 		$key = 'sijab_acc_rl_' . md5( $ip );
 		$hits = (int) get_transient( $key );
 		if ( $hits >= 60 ) {

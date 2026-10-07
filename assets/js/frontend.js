@@ -164,19 +164,16 @@
 		if (!btn || btn.disabled) return;
 		e.preventDefault();
 
-		var card     = btn.closest(CARD_SEL);
-		var select   = card ? card.querySelector('.sijab-var-select') : null;
-		if (!select || !select.value) return;
+		var parentId = parseInt(btn.getAttribute('data-parent-id'), 10) || 0;
+		if (!parentId) return;
 
-		var varId    = select.value;
-		var parentId = btn.getAttribute('data-parent-id');
-		var selected = select.options[select.selectedIndex];
-		var attrs    = {};
-		try { attrs = JSON.parse(selected.getAttribute('data-attributes') || '{}'); } catch (err) {}
-
-		// Get quantity from the qty input (if present)
-		var qtyInput = card.querySelector('.sijab-var-qty-input');
-		var qty = qtyInput ? Math.max(1, parseInt(qtyInput.value, 10) || 1) : 1;
+		// Shared with the popup/install flow (v2.34.0): variation + attributes
+		// from .sijab-var-select, quantity from the card's qty input.
+		var selection = readAccessorySelection(btn, parentId);
+		if (!selection.is_variable || !selection.variation_id) return;
+		var varId = selection.variation_id;
+		var attrs = selection.attributes || {};
+		var qty   = selection.quantity;
 
 		btn.disabled    = true;
 		var origText    = btn.textContent;
@@ -997,6 +994,14 @@
 		var btn = e.target.closest('.sijab-acc-atc-btn[data-main-product]');
 		if (!btn || btn.disabled) return;
 
+		// A request from this button is still in flight / showing feedback →
+		// swallow the click so a double-click can't double-add.
+		if (btn.classList.contains('loading')) {
+			e.preventDefault();
+			e.stopPropagation();
+			return;
+		}
+
 		// Bypass flag set by the "Endast accessory" branch → let the default add run
 		if (btn.getAttribute('data-sijab-bypass-popup') === '1') {
 			btn.removeAttribute('data-sijab-bypass-popup');
@@ -1216,13 +1221,23 @@
 		body.append('items', JSON.stringify(items));
 
 		// Visual feedback on the clicked button (mirrors the variable-product handler).
-		var origText = btn ? btn.textContent : '';
+		// The original label is cached ONCE on the element so a second click during
+		// the "✓" phase can't capture "✓" as the label to restore to.
+		if (btn && !btn.hasAttribute('data-sijab-orig-label')) {
+			btn.setAttribute('data-sijab-orig-label', btn.textContent);
+		}
+		var origText = btn ? btn.getAttribute('data-sijab-orig-label') : '';
 		if (btn) { btn.textContent = '…'; btn.classList.add('loading'); }
 		function restoreBtn(label, delay) {
 			if (!btn) return;
-			btn.classList.remove('loading');
-			btn.textContent = label || origText;
-			if (label) setTimeout(function () { btn.textContent = origText; }, delay || 1500);
+			if (label) {
+				// Keep .loading during the feedback phase so clicks stay swallowed.
+				btn.textContent = label;
+				setTimeout(function () { btn.textContent = origText; btn.classList.remove('loading'); }, delay || 1500);
+			} else {
+				btn.textContent = origText;
+				btn.classList.remove('loading');
+			}
 		}
 
 		fetch(ajaxUrl, { method: 'POST', body: body, credentials: 'same-origin' })

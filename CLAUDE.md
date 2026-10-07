@@ -35,11 +35,17 @@ accessory-tab/             ← plugin source (gets zipped)
 2. Bump version in BOTH places:
    - Plugin header: `* Version: X.X.X` (line ~6)
    - PHP constant: `const VERSION = 'X.X.X';` (line ~36)
-3. Commit to main + push:
+3. Commit + push. **Branch-first since v2.34.0:** larger changes (bug-fix rounds,
+   new features) go on a `fix/…` or `feat/…` branch and are pushed there; Henrik
+   tests the zip from that branch on test.sijab.com and merges to main himself.
+   Small, verified hotfixes may still go straight to main. Steps 4–6 (zip,
+   release, upload) are Henrik's — Claude does NOT create GitHub releases, since
+   a release immediately reaches every live install via the auto-updater.
    ```bash
    cd /tmp/acc-push/accessory-tab
+   git checkout -b fix/vX.X.X-short-name        # or work directly on main for a hotfix
    git -c user.email="..." -c user.name="..." commit -am "vX.X.X: ..."
-   git push origin main
+   git push -u origin fix/vX.X.X-short-name
    ```
 4. Build zip (Python, NOT PowerShell) to the windows zip path:
    ```python
@@ -214,6 +220,7 @@ Outline pill button matching the filled LÄGG TILL style — pill shape, primary
   - Companion qty preserved when the companion is also a checked accessory.
   - Install price shown incl./excl. moms per shop setting (`wc_get_price_to_display`).
   - HPOS compatibility declared; dead code removed (`restore_install_cart_item`, empty if-block); visible-accessory lookup cached per request; migration guards missing table.
+  - Review round 2 (same branch): "Paket först" implemented via `posts_clauses` (`bundles_first_clauses()`) — the meta_query OR/NOT EXISTS attempt gave non-deterministic order; rate limit keyed on `WC_Geolocation::get_ip_address()`; `persist_accessory_ids()` writes postmeta directly (no `WC_Product::save()` → no ERP/webhook storm on bulk); `is_product_in_cart()` helper replaces `$in_cart_now`; LÄGG TILL label cached in `data-sijab-orig-label` + clicks swallowed while `.loading`; variable-product handler reuses `readAccessorySelection()`; tracking endpoint uses `get_post_type()`; SKU duplicates reported again.
 
 ## Pending / Future
 - Reservdelar (spare parts) list — designed but not built (candidate för v2.35.0 eller senare)
